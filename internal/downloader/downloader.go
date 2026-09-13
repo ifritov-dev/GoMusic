@@ -72,10 +72,14 @@ func Check(ctx context.Context, ytBin, link string) (title string, count int, er
 }
 
 // Download fetches best audio as mp3 into dir and returns final file paths.
+// --add-metadata writes title/artist tags (uploader as artist fallback)
+// and --embed-thumbnail stores the cover art, so library, player card
+// and Discord presence pick them up with no extra work.
 func Download(ctx context.Context, ytBin, link, dir string) ([]string, error) {
 	var out, errOut bytes.Buffer
 	cmd := exec.CommandContext(ctx, ytBin,
 		"-x", "--audio-format", "mp3", "--audio-quality", "0",
+		"--add-metadata", "--embed-thumbnail",
 		"--no-warnings", "--print", "after_move:filepath",
 		"-o", dir+"/%(title)s.%(ext)s", link)
 	cmd.Stdout = &out

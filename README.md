@@ -101,8 +101,10 @@ up with `h`/`backspace`, press `a` to use the current folder.
 
 Pastes a YouTube / YouTube Music link, verifies it resolves, then
 downloads best audio as mp3 straight into your music folder and
-rescans the library. Playlists and albums download whole; single
-videos as one track. `esc` backs out (and cancels a running
+rescans the library. Title/artist tags and cover art are embedded
+(`--add-metadata --embed-thumbnail`; channel name backs up a missing
+artist), so the player, song card and Discord show them right away.
+Playlists and albums download whole; single videos as one track. `esc` backs out (and cancels a running
 download). Needs `yt-dlp` and `ffmpeg` installed —
 install yt-dlp: https://github.com/yt-dlp/yt-dlp#installation
 

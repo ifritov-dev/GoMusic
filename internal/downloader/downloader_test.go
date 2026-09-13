@@ -57,6 +57,11 @@ if [ "$flat" = "1" ]; then
   printf 'Song One\nSong Two\n'
   exit 0
 fi
+# Lock the tagging recipe: downloads must request metadata + thumbnail.
+case " $* " in
+  *" --add-metadata "*"--embed-thumbnail "*) ;;
+  *) echo "missing tagging flags" >&2; exit 1 ;;
+esac
 d=$(dirname "$out")
 mkdir -p "$d"
 touch "$d/Song One.mp3" "$d/Song Two.mp3"
