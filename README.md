@@ -45,7 +45,11 @@ Config lives in the OS config dir (`~/.config/gomusic/config.json`
 
 `S` → Discord section: `d` enables/disables, `tab` edits the
 Application ID and details line, `t` toggles playback progress,
-`b` toggles the GitHub button. Presence shows
+`b` toggles the GitHub button, and a status line shows whether
+Discord is connected. GoMusic finds Discord itself — native,
+Flatpak and Snap installs are auto-detected (any UID, `ipc-0..9`,
+sandbox runtime dirs, even sockets visible only via a Discord
+process). Presence shows
 `Listening to {Song} — {Artist}`, `Using GoMusic`, live progress and
 a button to this repo; it updates on track change, pause/resume and
 seek, and clears on quit.

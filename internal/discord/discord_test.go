@@ -32,14 +32,16 @@ func TestBuildActivity(t *testing.T) {
 	if a.State != "Listening to Song — Art" {
 		t.Fatalf("state = %q", a.State)
 	}
-	if a.Details != "Using GoMusic" || a.LargeImage != LogoAsset || a.SmallImage != LogoAsset {
+	if a.Details != "Using GoMusic" || a.Assets.LargeImage != LogoAsset || a.Assets.SmallImage != LogoAsset {
 		t.Fatalf("assets/details wrong: %+v", a)
 	}
 	if a.Timestamps == nil || a.Timestamps.End == nil {
 		t.Fatal("expected start+end timestamps while playing")
 	}
-	if end := a.Timestamps.End.Sub(start); end < 190*time.Second || end > 210*time.Second {
-		t.Fatalf("end timestamp off: %v", end)
+	// Millis: end ≈ now + length − position.
+	wantEnd := uint64(start.Add(195*time.Second).UnixNano() / 1e6)
+	if got := *a.Timestamps.End; got < wantEnd-5000 || got > wantEnd+5000 {
+		t.Fatalf("end timestamp off: got %d want ~%d", got, wantEnd)
 	}
 	if len(a.Buttons) != 1 || a.Buttons[0].Url != GitHubURL {
 		t.Fatalf("buttons wrong: %+v", a.Buttons)

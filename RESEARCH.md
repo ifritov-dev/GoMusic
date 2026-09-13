@@ -92,10 +92,20 @@ libraries actually vendored in `go.mod`/`go.sum`.
   logs out = clears presence), `Update` publishes track/pause/seek
   snapshots, `Shutdown` runs on quit (process exit closes the socket
   anyway, which also clears presence).
-- rich-go keeps unsynchronized global socket state, so every IPC call
-  process-wide goes through one gate mutex (found via `-race`).
-  `Logout` panics on dead sockets → wrapped in recover. Absent or
-  restarted Discord = silent no-op, next Update redials.
+- First used rich-go, then replaced it with `internal/discord/ipc`:
+  rich-go hardcodes the socket (`discord-ipc-0` under UID-1000
+  Flatpak/Snap paths), so Flatpak Discord on other UIDs never
+  connects. Ours tries `ipc-0..9` across `$XDG_RUNTIME_DIR`, `/tmp`,
+  `/run/user/<uid>`, dynamic-UID `.flatpak/*/xdg-run` + snap dirs,
+  plus a `/proc` scan for sockets visible only inside a Discord
+  process's namespace. rich-go also had unsynchronized global socket
+  state (found via `-race`) — the new client serializes frames
+  internally. Absent or restarted Discord = silent no-op, next
+  Update redials; a ~30s tick re-pushes so Discord started after
+  GoMusic is picked up automatically.
+- Wire-verified with a fake Discord IPC server over a temp
+  `XDG_RUNTIME_DIR`: handshake + browsing/play/pause payloads byte-
+  exact (state, timestamps, buttons, logo assets).
 - Timestamps: start = now − position, end = start + length (playing
   only; paused drops them so Discord doesn't keep counting).
 - Images must be Art Assets of the user's Application ID → `logo`

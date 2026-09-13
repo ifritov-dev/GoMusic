@@ -31,6 +31,7 @@ const (
 
 // Messages
 type tickMsg time.Time
+type discordRefreshMsg struct{}
 type trackEndedMsg struct{}
 type libraryMsg struct{ tracks []library.Track }
 type errMsg struct{ err error }
@@ -164,6 +165,8 @@ type Model struct {
 	artH    int
 	// Discord Rich Presence (optional; all IPC off the main path).
 	discord *discord.Manager
+	// Ticks since start (presence re-pushes every ~30s).
+	ticks int
 	// Settings focus: folder picker or one of the Discord inputs.
 	setFocus      int
 	clientIDInput textinput.Model
@@ -237,6 +240,10 @@ func (m Model) Init() tea.Cmd {
 
 func tick() tea.Cmd {
 	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+func discordRefreshAfter(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(time.Time) tea.Msg { return discordRefreshMsg{} })
 }
 
 func (m Model) loadLibrary(dir string) tea.Cmd {
@@ -610,7 +617,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
+		m.ticks++
+		if m.ticks%60 == 0 {
+			// Re-detect Discord started after us; refresh timestamps.
+			return m, tea.Batch(tick(), m.pushPresenceCmd())
+		}
 		return m, tick()
+
+	case discordRefreshMsg:
+		return m, nil
 
 	case trackEndedMsg:
 		if m.playing && m.mode == modeMain {
@@ -784,7 +799,7 @@ func (m Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cfg.Discord.Enabled = !m.cfg.Discord.Enabled
 			m.persist()
 			m.status = "discord: " + onOff(m.cfg.Discord.Enabled)
-			return m, tea.Batch(m.syncDiscordCmd(), clearStatusAfter(2*time.Second))
+			return m, tea.Batch(m.syncDiscordCmd(), clearStatusAfter(2*time.Second), discordRefreshAfter(2*time.Second))
 		case km.String() == "t":
 			m.cfg.Discord.ShowTime = !m.cfg.Discord.ShowTime
 			m.persist()
@@ -836,6 +851,23 @@ func (m *Model) focusInputs() {
 func (m *Model) blurInputs() {
 	m.clientIDInput.Blur()
 	m.detailsInput.Blur()
+}
+
+func (m Model) discordStatusLine() string {
+	d := m.cfg.Discord
+	if !d.Enabled {
+		return dimStyle.Render("disabled")
+	}
+	if d.ClientID == "" {
+		return dimStyle.Render("needs an Application ID")
+	}
+	if ok, detail := m.discord.Status(); ok {
+		return badgeOn.Render("CONNECTED")
+	} else if detail != "" {
+		return badgeOff.Render("OFFLINE") + dimStyle.Render("  ("+detail+")")
+	} else {
+		return badgeOff.Render("OFFLINE")
+	}
 }
 
 func (m *Model) saveDiscordInputs() {
@@ -1058,6 +1090,7 @@ func (m Model) viewSettings() string {
 	b.WriteString(focusMark(focusDetails) + dimStyle.Render("Details:   ") + m.detailsInput.View() + "\n")
 	b.WriteString("  " + dimStyle.Render("Show time: ") + timeState + dimStyle.Render("  (t)   ") +
 		dimStyle.Render("GitHub button: ") + btnState + dimStyle.Render("  (b)") + "\n")
+	b.WriteString("  " + dimStyle.Render("Status: ") + m.discordStatusLine() + "\n")
 	b.WriteString(boxStyle.Render(
 		"Folder: ↑/↓ or j/k • open: enter/l • up: h/backspace • a uses the folder\n" +
 			"Discord: tab edits ID/details • d/t/b toggle • esc back",
