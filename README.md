@@ -90,11 +90,21 @@ on Linux): music folder, volume, shuffle, repeat — all persisted.
 | `/` | filter library |
 | `?` | full help on/off |
 | `S` | settings (music folder) |
+| `y` | download from YouTube / YouTube Music |
 | `esc` | back |
 | `q` | quit |
 
 Settings: navigate with `↑/↓` or `j/k`, open with `enter`/`l`,
 up with `h`/`backspace`, press `a` to use the current folder.
+
+### Download (`y`)
+
+Pastes a YouTube / YouTube Music link, verifies it resolves, then
+downloads best audio as mp3 straight into your music folder and
+rescans the library. Playlists and albums download whole; single
+videos as one track. `esc` backs out (and cancels a running
+download). Needs `yt-dlp` and `ffmpeg` installed —
+install yt-dlp: https://github.com/yt-dlp/yt-dlp#installation
 
 ## Layout
 

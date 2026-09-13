@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/earendil/gomusic/internal/config"
 	"github.com/earendil/gomusic/internal/discord"
+	"github.com/earendil/gomusic/internal/downloader"
 	"github.com/earendil/gomusic/internal/library"
 	"github.com/earendil/gomusic/internal/player"
 )
@@ -27,6 +29,7 @@ type mode int
 const (
 	modeMain mode = iota
 	modeSettings
+	modeDownload
 )
 
 // Messages
@@ -58,6 +61,7 @@ type keyMap struct {
 	SeekBack key.Binding
 	Settings key.Binding
 	ApplyDir key.Binding
+	Download key.Binding
 	Back     key.Binding
 	Help     key.Binding
 	Quit     key.Binding
@@ -72,7 +76,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Play, k.Pause, k.Stop, k.Next, k.Prev},
 		{k.Shuffle, k.Repeat, k.VolUp, k.VolDown, k.Mute},
-		{k.SeekFwd, k.SeekBack, k.Settings, k.Help, k.Back, k.Quit},
+		{k.SeekFwd, k.SeekBack, k.Settings, k.Download, k.Help, k.Back, k.Quit},
 	}
 }
 
@@ -90,6 +94,7 @@ var keys = keyMap{
 	SeekFwd:  key.NewBinding(key.WithKeys("l", "right"), key.WithHelp("→", "+5s")),
 	SeekBack: key.NewBinding(key.WithKeys("h", "left"), key.WithHelp("←", "-5s")),
 	Settings: key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "settings")),
+	Download: key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "download")),
 	ApplyDir: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "use folder")),
 	Back:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 	Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
@@ -170,6 +175,12 @@ type Model struct {
 	// Settings focus: folder picker or one of the Discord inputs.
 	setFocus      int
 	clientIDInput textinput.Model
+	// YouTube download tab.
+	urlInput textinput.Model
+	dlStatus string
+	dlBusy   bool
+	dlGen    int
+	dlCancel context.CancelFunc
 }
 
 // Settings focus zones.
@@ -203,13 +214,18 @@ func New(cfg *config.Config, p *player.Player) Model {
 	ci.CharLimit = 32
 	ci.SetValue(cfg.Discord.ClientID)
 
+	ui := textinput.New()
+	ui.Prompt = ""
+	ui.Placeholder = "https://music.youtube.com/… or youtube.com/…"
+	ui.CharLimit = 2048
+
 	dm := discord.New()
 	dm.Configure(discordSettingsOf(cfg))
 
 	return Model{
 		cfg: cfg, player: p, list: l, prog: prog, picker: fp,
 		help: help.New(), mode: modeMain, cur: -1,
-		discord: dm, clientIDInput: ci,
+		discord: dm, clientIDInput: ci, urlInput: ui,
 	}
 }
 
@@ -646,6 +662,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.mode == modeSettings {
 		return m.updateSettings(msg)
 	}
+	if m.mode == modeDownload {
+		return m.updateDownload(msg)
+	}
 	return m.updateMain(msg)
 }
 
@@ -666,6 +685,15 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Help):
 			m.showHelp = !m.showHelp
 			return m, nil
+		case key.Matches(msg, keys.Download):
+			m.mode = modeDownload
+			m.urlInput.Focus()
+			if _, _, err := downloader.Bins(); err != nil {
+				m.dlStatus = err.Error()
+			} else if m.dlStatus == "" {
+				m.dlStatus = "paste a YouTube / YouTube Music link — playlists download whole"
+			}
+			return m, textinput.Blink
 		case key.Matches(msg, keys.Settings):
 			m.mode = modeSettings
 			m.picker.CurrentDirectory = m.cfg.MusicDir
@@ -866,6 +894,9 @@ func (m Model) View() string {
 	}
 	if m.mode == modeSettings {
 		return m.viewSettings()
+	}
+	if m.mode == modeDownload {
+		return m.viewDownload()
 	}
 	return m.viewMain()
 }
@@ -1078,6 +1109,145 @@ func (m Model) viewSettings() string {
 	if m.status != "" {
 		b.WriteString("\n" + dimStyle.Render("* "+trunc(m.status, max(m.width-4, 10))))
 	}
+	b.WriteString("\n" + dimStyle.Render(m.help.View(keys)))
+	return b.String()
+}
+
+// Download (YouTube) ------------------------------------------------
+
+// dlCheckMsg carries the link-check result; dlDoneMsg the download result.
+// gen drops stale results when the user cancels or restarts.
+type dlCheckMsg struct {
+	gen   int
+	link  string
+	title string
+	count int
+	err   string
+}
+
+type dlDoneMsg struct {
+	gen   int
+	files []string
+	err   string
+}
+
+func (m Model) updateDownload(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch {
+		case key.Matches(msg, keys.Back):
+			if m.dlBusy && m.dlCancel != nil {
+				m.dlCancel()
+				m.dlGen++ // in-flight results become stale
+				m.dlBusy = false
+				m.dlStatus = "cancelled"
+			}
+			m.mode = modeMain
+			m.urlInput.Blur()
+			return m, nil
+		case msg.String() == "enter":
+			return m.startDownload()
+		}
+	case dlCheckMsg:
+		if msg.gen != m.dlGen {
+			return m, nil // stale (cancelled/superseded)
+		}
+		if msg.err != "" {
+			m.dlBusy = false
+			m.dlStatus = msg.err
+			return m, nil
+		}
+		if msg.count > 1 {
+			m.dlStatus = fmt.Sprintf("found %d tracks (%s…) — downloading…", msg.count, trunc(msg.title, 40))
+		} else {
+			m.dlStatus = fmt.Sprintf("found %s — downloading…", trunc(msg.title, 60))
+		}
+		return m, m.dlFetchCmd(msg.gen, msg.link)
+	case dlDoneMsg:
+		if msg.gen != m.dlGen {
+			return m, nil // stale
+		}
+		m.dlBusy = false
+		if msg.err != "" {
+			m.dlStatus = msg.err
+			return m, nil
+		}
+		names := make([]string, 0, len(msg.files))
+		for _, f := range msg.files {
+			if i := strings.LastIndex(f, "/"); i >= 0 {
+				f = f[i+1:]
+			}
+			names = append(names, strings.TrimSuffix(f, ".mp3"))
+		}
+		shown := strings.Join(names, ", ")
+		if len(msg.files) > 3 {
+			shown = strings.Join(names[:3], ", ") + fmt.Sprintf(", +%d more", len(msg.files)-3)
+		}
+		m.dlStatus = fmt.Sprintf("saved %d file(s) to %s: %s", len(msg.files), m.cfg.MusicDir, shown)
+		return m, m.loadLibrary(m.cfg.MusicDir)
+	}
+	var cmd tea.Cmd
+	m.urlInput, cmd = m.urlInput.Update(msg)
+	return m, cmd
+}
+
+// startDownload validates the link and tools, then kicks off check → fetch.
+func (m Model) startDownload() (tea.Model, tea.Cmd) {
+	if m.dlBusy {
+		return m, nil
+	}
+	link, err := downloader.ValidURL(m.urlInput.Value())
+	if err != nil {
+		m.dlStatus = err.Error()
+		return m, nil
+	}
+	ytBin, _, err := downloader.Bins()
+	if err != nil {
+		m.dlStatus = err.Error()
+		return m, nil
+	}
+	m.dlBusy = true
+	m.dlGen++
+	m.dlStatus = "checking link…"
+	ctx, cancel := context.WithCancel(context.Background())
+	m.dlCancel = cancel
+	gen := m.dlGen
+	return m, func() tea.Msg {
+		title, n, err := downloader.Check(ctx, ytBin, link)
+		if err != nil {
+			return dlCheckMsg{gen: gen, err: err.Error()}
+		}
+		return dlCheckMsg{gen: gen, link: link, title: title, count: n}
+	}
+}
+
+func (m Model) dlFetchCmd(gen int, link string) tea.Cmd {
+	ytBin, _, _ := downloader.Bins()
+	dir := m.cfg.MusicDir
+	ctx, cancel := context.WithCancel(context.Background())
+	m.dlCancel = cancel
+	return func() tea.Msg {
+		files, err := downloader.Download(ctx, ytBin, link, dir)
+		if err != nil {
+			return dlDoneMsg{gen: gen, err: err.Error()}
+		}
+		return dlDoneMsg{gen: gen, files: files}
+	}
+}
+
+func (m Model) viewDownload() string {
+	var b strings.Builder
+	b.WriteString(brandStyle.Render("♪ GoMusic") + dimStyle.Render("  download from YouTube") + "\n\n")
+	b.WriteString("Link:\n" + m.urlInput.View() + "\n\n")
+	if m.dlBusy {
+		b.WriteString(titleStyle.Render("… "+m.dlStatus) + "\n")
+	} else if m.dlStatus != "" {
+		b.WriteString(m.dlStatus + "\n")
+	}
+	b.WriteString("\n" + boxStyle.Render(
+		"enter checks the link and downloads mp3 into your music folder\n"+
+			"playlists/albums download whole • esc backs out (cancels a running download)",
+	))
 	b.WriteString("\n" + dimStyle.Render(m.help.View(keys)))
 	return b.String()
 }
