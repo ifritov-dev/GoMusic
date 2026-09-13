@@ -57,7 +57,9 @@ second row the artist, plus live progress, always our logo as the
 large image, and a GitHub button to this repo (no hover texts or
 small image: some clients render them as duplicate rows). The
 `logo` asset must be uploaded under the Application ID or the
-card degrades; it updates on track change, pause/resume
+card degrades.
+Note: Discord hides buttons on your *own* activity card — other
+people viewing your profile see them, you don't; it updates on track change, pause/resume
 and seek, and clears on quit. Pushes are generation-gated (no stale
 flashes) and Discord-absent rescans back off, so playback never
 waits on Discord.
