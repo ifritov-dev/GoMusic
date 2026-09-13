@@ -113,8 +113,13 @@ libraries actually vendored in `go.mod`/`go.sum`.
   Assets render, so logo-only images is the ceiling.
 - Hover texts (`large_text`/`small_text`) removed entirely: some
   clients render them as phantom rows (song duplicated, or a stray
-  "GoMusic" row when idle). Final payload: type + details + state +
-  images + timestamps + button, nothing else.
+  "GoMusic" row when idle).
+- Button fix: the payload was always valid (accepted by a real client
+  with zero errors), but it referenced the never-uploaded `logo`
+  asset — dangling keys degrade the card, buttons included. Assets
+  are now omitted unless `ShowArtwork` is on (`i` toggle); default
+  wire format is name + type + details + state + timestamps +
+  buttons. Explicit `name: GoMusic` also added.
 - Perf: staleness gate moved before dialing (startup herd collapses
   to one scan), failed scans cool off 30s, working socket cached —
   steady-state background cost ≈ zero, playback path never blocks. rich-go also had unsynchronized global socket

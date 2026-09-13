@@ -55,7 +55,9 @@ game entry for gomusic to avoid a duplicate "Playing" row).
 Presence renders as Listening (type 2) with the song as the main
 row — `{Song} — {Artist}` — plus the status text, live progress
 and a button to this repo (no hover texts: some clients render them
-as duplicate rows); it updates on track change, pause/resume
+as duplicate rows). Artwork stays off by default — press `i` to use
+the uploaded `logo` asset; never reference art that was never
+uploaded, it degrades the whole card including the button; it updates on track change, pause/resume
 and seek, and clears on quit. Pushes are generation-gated (no stale
 flashes) and Discord-absent rescans back off, so playback never
 waits on Discord.

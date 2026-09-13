@@ -44,8 +44,15 @@ func TestBuildActivity(t *testing.T) {
 	if a.State != "Using GoMusic" {
 		t.Fatalf("state = %q, want the status text second", a.State)
 	}
-	if a.Assets.LargeImage != LogoAsset || a.Assets.SmallImage != LogoAsset {
-		t.Fatalf("assets wrong: %+v", a.Assets)
+	if a.Name != "GoMusic" {
+		t.Fatalf("name = %q", a.Name)
+	}
+	if a.Assets != nil {
+		t.Fatalf("default must omit assets: %+v", a.Assets)
+	}
+	art := buildActivity(Settings{ShowArtwork: true}, TrackInfo{Active: true, Title: "Song", Playing: true})
+	if art.Assets == nil || art.Assets.LargeImage != LogoAsset || art.Assets.SmallImage != LogoAsset {
+		t.Fatalf("artwork assets wrong: %+v", art.Assets)
 	}
 	if a.Timestamps == nil || a.Timestamps.End == nil {
 		t.Fatal("expected start+end timestamps while playing")

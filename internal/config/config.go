@@ -24,6 +24,9 @@ type DiscordConfig struct {
 	Details    string `json:"details"`   // details line, e.g. "Using GoMusic"
 	ShowTime   bool   `json:"show_time"` // playback progress via timestamps
 	ShowButton bool   `json:"show_button"`
+	// ShowArtwork references the pre-uploaded `logo` Art Asset. Leave
+	// off unless the asset exists, or the card may render degraded.
+	ShowArtwork bool `json:"show_artwork"`
 }
 
 // Config is persisted as JSON in the OS user config dir.

@@ -42,11 +42,12 @@ func EffectiveClientID(custom string) string {
 // Settings mirrors config.DiscordConfig (kept local to avoid an import
 // cycle towards internal/config).
 type Settings struct {
-	Enabled    bool
-	ClientID   string
-	Details    string
-	ShowTime   bool
-	ShowButton bool
+	Enabled     bool
+	ClientID    string
+	Details     string
+	ShowTime    bool
+	ShowButton  bool
+	ShowArtwork bool
 }
 
 // TrackInfo is a snapshot of what is playing right now.
@@ -61,11 +62,12 @@ type TrackInfo struct {
 
 // Presence payload (Discord activity JSON).
 type activity struct {
+	Name string `json:"name,omitempty"`
 	// Type 2 makes Discord render "Listening to" instead of "Playing".
 	Type       int                 `json:"type,omitempty"`
 	Details    string              `json:"details,omitempty"`
 	State      string              `json:"state,omitempty"`
-	Assets     activityAssets      `json:"assets,omitempty"`
+	Assets     *activityAssets     `json:"assets,omitempty"`
 	Timestamps *activityTimestamps `json:"timestamps,omitempty"`
 	Buttons    []*activityButton   `json:"buttons,omitempty"`
 }
@@ -259,14 +261,14 @@ func buildActivity(st Settings, info TrackInfo) activity {
 		song = "GoMusic"
 	}
 	act := activity{
+		Name:  "GoMusic",
 		Type:  2,
 		State: truncRunes(firstNonEmpty(st.Details, "Using GoMusic"), 128),
-		Assets: activityAssets{
-			// Discord only renders Art Assets pre-uploaded under the
-			// Application ID, so a local song cover cannot be used.
-			LargeImage: LogoAsset,
-			SmallImage: LogoAsset,
-		},
+	}
+	if st.ShowArtwork {
+		// Only reference the asset when it was actually uploaded;
+		// dangling keys degrade the whole card (images AND buttons).
+		act.Assets = &activityAssets{LargeImage: LogoAsset, SmallImage: LogoAsset}
 	}
 	if info.Active {
 		if info.Playing {
