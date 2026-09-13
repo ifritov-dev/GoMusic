@@ -15,12 +15,24 @@ const (
 	RepeatOne RepeatMode = "one"
 )
 
+// DiscordConfig holds the optional Discord Rich Presence settings.
+// Discord only renders image keys uploaded as Art Assets under the
+// Application ID below (see README), so both images use the app logo.
+type DiscordConfig struct {
+	Enabled    bool   `json:"enabled"`
+	ClientID   string `json:"client_id"` // Discord Application ID
+	Details    string `json:"details"`   // details line, e.g. "Using GoMusic"
+	ShowTime   bool   `json:"show_time"` // playback progress via timestamps
+	ShowButton bool   `json:"show_button"`
+}
+
 // Config is persisted as JSON in the OS user config dir.
 type Config struct {
-	MusicDir string     `json:"music_dir"`
-	Volume   int        `json:"volume"` // 0-100
-	Shuffle  bool       `json:"shuffle"`
-	Repeat   RepeatMode `json:"repeat"`
+	MusicDir string        `json:"music_dir"`
+	Volume   int           `json:"volume"` // 0-100
+	Shuffle  bool          `json:"shuffle"`
+	Repeat   RepeatMode    `json:"repeat"`
+	Discord  DiscordConfig `json:"discord"`
 }
 
 func Default() *Config {
@@ -29,7 +41,8 @@ func Default() *Config {
 	if home == "" {
 		music = "."
 	}
-	return &Config{MusicDir: music, Volume: 80, Shuffle: false, Repeat: RepeatOff}
+	return &Config{MusicDir: music, Volume: 80, Shuffle: false, Repeat: RepeatOff,
+		Discord: DiscordConfig{Details: "Using GoMusic", ShowTime: true, ShowButton: true}}
 }
 
 func Path() (string, error) {
@@ -68,6 +81,9 @@ func Load() *Config {
 	}
 	if loaded.MusicDir == "" {
 		loaded.MusicDir = cfg.MusicDir
+	}
+	if loaded.Discord.Details == "" {
+		loaded.Discord.Details = "Using GoMusic"
 	}
 	return &loaded
 }

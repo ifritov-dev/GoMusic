@@ -40,6 +40,22 @@ compiler: `gcc` on Linux, Xcode CLT on macOS, MinGW-w64 on Windows).
 No system audio dev packages, no external binaries.
 
 Config lives in the OS config dir (`~/.config/gomusic/config.json`
+
+## Discord Rich Presence (optional)
+
+`S` → Discord section: `d` enables/disables, `tab` edits the
+Application ID and details line, `t` toggles playback progress,
+`b` toggles the GitHub button. Presence shows
+`Listening to {Song} — {Artist}`, `Using GoMusic`, live progress and
+a button to this repo; it updates on track change, pause/resume and
+seek, and clears on quit.
+
+Setup (once): create an app at
+https://discord.com/developers/applications → Rich Presence → Art
+Assets → upload `assets/GoMusic-bg.png` as `logo`, then paste the
+Application ID into Settings. Note: Discord only renders images
+pre-uploaded under your Application ID, so local song covers can't be
+used — the logo is shown and the song rides in the hover text
 on Linux): music folder, volume, shuffle, repeat — all persisted.
 
 ## Keys
@@ -68,6 +84,7 @@ up with `h`/`backspace`, press `a` to use the current folder.
 
 ```
 main.go                  entry: config → player → bubbletea program
+internal/discord/        optional Discord Rich Presence (rich-go IPC)
 internal/audio/          miniaudio output backend (pulls beep streamers)
 internal/player/         decode → resample → volume → transport controls
 internal/library/        recursive scan + tag metadata + cover extraction

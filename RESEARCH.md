@@ -85,6 +85,22 @@ libraries actually vendored in `go.mod`/`go.sum`.
   200×50, 120×32, 90×24, 70×22 and 48×14, each rendering exactly
   the window height.
 
+## Discord Rich Presence (rich-go IPC)
+
+- `internal/discord.Manager`: snapshot in, goroutine out — the TUI
+  never blocks on Discord. `Configure` applies settings (disabling
+  logs out = clears presence), `Update` publishes track/pause/seek
+  snapshots, `Shutdown` runs on quit (process exit closes the socket
+  anyway, which also clears presence).
+- rich-go keeps unsynchronized global socket state, so every IPC call
+  process-wide goes through one gate mutex (found via `-race`).
+  `Logout` panics on dead sockets → wrapped in recover. Absent or
+  restarted Discord = silent no-op, next Update redials.
+- Timestamps: start = now − position, end = start + length (playing
+  only; paused drops them so Discord doesn't keep counting).
+- Images must be Art Assets of the user's Application ID → `logo`
+  for both, song in `LargeText`; setup documented in README.
+
 ## UI notes (v2: left/right/bottom layout + proportional scaling)
 
 - Regions, top to bottom: header (1) → middle (library left, song

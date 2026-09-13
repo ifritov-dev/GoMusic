@@ -11,10 +11,12 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/earendil/gomusic/internal/config"
+	"github.com/earendil/gomusic/internal/discord"
 	"github.com/earendil/gomusic/internal/library"
 	"github.com/earendil/gomusic/internal/player"
 )
@@ -160,7 +162,20 @@ type Model struct {
 	artText string
 	artW    int
 	artH    int
+	// Discord Rich Presence (optional; all IPC off the main path).
+	discord *discord.Manager
+	// Settings focus: folder picker or one of the Discord inputs.
+	setFocus      int
+	clientIDInput textinput.Model
+	detailsInput  textinput.Model
 }
+
+// Settings focus zones.
+const (
+	focusPicker = iota
+	focusClientID
+	focusDetails
+)
 
 func New(cfg *config.Config, p *player.Player) Model {
 	delegate := list.NewDefaultDelegate()
@@ -181,9 +196,33 @@ func New(cfg *config.Config, p *player.Player) Model {
 	fp.CurrentDirectory = cfg.MusicDir
 	fp.Height = 12
 
+	ci := textinput.New()
+	ci.Prompt = ""
+	ci.Placeholder = "Discord Application ID"
+	ci.CharLimit = 32
+	ci.SetValue(cfg.Discord.ClientID)
+
+	di := textinput.New()
+	di.Prompt = ""
+	di.Placeholder = "Using GoMusic"
+	di.CharLimit = 100
+	di.SetValue(cfg.Discord.Details)
+
+	dm := discord.New()
+	dm.Configure(discordSettingsOf(cfg))
+
 	return Model{
 		cfg: cfg, player: p, list: l, prog: prog, picker: fp,
 		help: help.New(), mode: modeMain, cur: -1,
+		discord: dm, clientIDInput: ci, detailsInput: di,
+	}
+}
+
+func discordSettingsOf(cfg *config.Config) discord.Settings {
+	d := cfg.Discord
+	return discord.Settings{
+		Enabled: d.Enabled, ClientID: d.ClientID, Details: d.Details,
+		ShowTime: d.ShowTime, ShowButton: d.ShowButton,
 	}
 }
 
@@ -192,6 +231,7 @@ func (m Model) Init() tea.Cmd {
 		m.loadLibrary(m.cfg.MusicDir),
 		m.picker.Init(),
 		tick(),
+		m.syncDiscordCmd(),
 	)
 }
 
@@ -356,7 +396,7 @@ func (m *Model) playIndex(i int) tea.Cmd {
 		m.artW, m.artH = lo.artW, lo.artH
 		cmds = append(cmds, loadArtCmd(m.tracks[i].Path, lo.artW, lo.artH))
 	}
-	cmds = append(cmds, m.waitTrackEnd())
+	cmds = append(cmds, m.waitTrackEnd(), m.pushPresenceCmd())
 	return tea.Batch(cmds...)
 }
 
@@ -408,7 +448,7 @@ func (m *Model) onTrackEnded() tea.Cmd {
 			m.cur = -1
 			m.artPath, m.artText = "", ""
 			m.status = "queue finished"
-			return clearStatusAfter(2 * time.Second)
+			return tea.Batch(clearStatusAfter(2*time.Second), m.pushPresenceCmd())
 		}
 		return m.playIndex(j)
 	}
@@ -424,6 +464,33 @@ func (m *Model) setItems() {
 }
 
 func (m *Model) persist() { _ = m.cfg.Save() }
+
+// presenceInfo snapshots playback for the Discord manager.
+func (m Model) presenceInfo() discord.TrackInfo {
+	info := discord.TrackInfo{}
+	if m.cur >= 0 && m.cur < len(m.tracks) {
+		t := m.tracks[m.cur]
+		info.Active = true
+		info.Title, info.Artist = t.Title, t.Artist
+		info.Length = m.player.Length()
+		info.Position = m.player.Position()
+		info.Playing = m.playing && !m.player.Paused()
+	}
+	return info
+}
+
+// pushPresenceCmd publishes the current snapshot (never blocks: the
+// manager dials Discord in a background goroutine).
+func (m Model) pushPresenceCmd() tea.Cmd {
+	info := m.presenceInfo()
+	return func() tea.Msg { m.discord.Update(info); return nil }
+}
+
+// syncDiscordCmd re-applies settings, then publishes the snapshot.
+func (m Model) syncDiscordCmd() tea.Cmd {
+	st, info := discordSettingsOf(m.cfg), m.presenceInfo()
+	return func() tea.Msg { m.discord.Configure(st); m.discord.Update(info); return nil }
+}
 
 func repeatLabel(r config.RepeatMode) string {
 	switch r {
@@ -587,6 +654,7 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, keys.Quit):
 			m.persist()
+			m.discord.Shutdown()
 			return m, tea.Quit
 		case key.Matches(msg, keys.Help):
 			m.showHelp = !m.showHelp
@@ -594,13 +662,15 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Settings):
 			m.mode = modeSettings
 			m.picker.CurrentDirectory = m.cfg.MusicDir
+			m.setFocus = focusPicker
+			m.blurInputs()
 			return m, m.picker.Init()
 		case key.Matches(msg, keys.Pause):
 			if m.cur >= 0 {
 				m.player.Toggle()
 				m.playing = !m.player.Paused()
 			}
-			return m, nil
+			return m, m.pushPresenceCmd()
 		case key.Matches(msg, keys.Play):
 			if sel, ok := m.list.SelectedItem().(trackItem); ok {
 				for i, t := range m.tracks {
@@ -612,7 +682,7 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, keys.Stop):
 			m.stopPlayback()
-			return m, nil
+			return m, m.pushPresenceCmd()
 		case key.Matches(msg, keys.Next):
 			j := m.nextIndex(1)
 			if j >= 0 {
@@ -623,7 +693,7 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Prev):
 			if m.player.Position() > 3*time.Second {
 				m.player.SeekBy(-m.player.Position())
-				return m, nil
+				return m, m.pushPresenceCmd()
 			}
 			j := m.nextIndex(-1)
 			if j >= 0 {
@@ -655,10 +725,10 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, keys.SeekFwd):
 			m.player.SeekBy(5 * time.Second)
-			return m, nil
+			return m, m.pushPresenceCmd()
 		case key.Matches(msg, keys.SeekBack):
 			m.player.SeekBy(-5 * time.Second)
-			return m, nil
+			return m, m.pushPresenceCmd()
 		}
 	}
 
@@ -668,19 +738,37 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	if km, ok := msg.(tea.KeyMsg); ok {
+		if key.Matches(km, keys.Quit) {
+			m.saveDiscordInputs()
+			m.persist()
+			m.discord.Shutdown()
+			return m, tea.Quit
+		}
+		if m.setFocus != focusPicker {
+			// Typing in a Discord input: esc/enter/tab blurs,
+			// everything else goes to the input.
+			if key.Matches(km, keys.Back) || km.Type == tea.KeyEnter || km.String() == "tab" {
+				m.saveDiscordInputs()
+				m.persist()
+				if km.String() == "tab" {
+					m.cycleFocus()
+				} else {
+					m.setFocus = focusPicker
+					m.blurInputs()
+				}
+				return m, m.syncDiscordCmd()
+			}
+			return m.updateDiscordInput(msg)
+		}
 		switch {
-		case key.Matches(msg, keys.Back):
+		case key.Matches(km, keys.Back):
 			m.mode = modeMain
-			return m, nil
-		case key.Matches(msg, keys.Help):
+			return m, m.pushPresenceCmd()
+		case key.Matches(km, keys.Help):
 			m.showHelp = !m.showHelp
 			return m, nil
-		case key.Matches(msg, keys.Quit):
-			m.persist()
-			return m, tea.Quit
-		case key.Matches(msg, keys.ApplyDir):
+		case key.Matches(km, keys.ApplyDir):
 			dir := m.picker.CurrentDirectory
 			m.cfg.MusicDir = dir
 			m.persist()
@@ -688,11 +776,73 @@ func (m Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.stopPlayback()
 			m.status = "library: " + dir
 			return m, tea.Batch(m.loadLibrary(dir), clearStatusAfter(3*time.Second))
+		case km.String() == "tab":
+			m.setFocus = focusClientID
+			m.focusInputs()
+			return m, textinput.Blink
+		case km.String() == "d":
+			m.cfg.Discord.Enabled = !m.cfg.Discord.Enabled
+			m.persist()
+			m.status = "discord: " + onOff(m.cfg.Discord.Enabled)
+			return m, tea.Batch(m.syncDiscordCmd(), clearStatusAfter(2*time.Second))
+		case km.String() == "t":
+			m.cfg.Discord.ShowTime = !m.cfg.Discord.ShowTime
+			m.persist()
+			return m, m.syncDiscordCmd()
+		case km.String() == "b":
+			m.cfg.Discord.ShowButton = !m.cfg.Discord.ShowButton
+			m.persist()
+			return m, m.syncDiscordCmd()
 		}
+	}
+	if m.setFocus != focusPicker {
+		return m.updateDiscordInput(msg)
 	}
 	var cmd tea.Cmd
 	m.picker, cmd = m.picker.Update(msg)
 	return m, cmd
+}
+
+// updateDiscordInput routes messages to the focused settings input.
+func (m Model) updateDiscordInput(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	if m.setFocus == focusDetails {
+		m.detailsInput, cmd = m.detailsInput.Update(msg)
+	} else {
+		m.clientIDInput, cmd = m.clientIDInput.Update(msg)
+	}
+	return m, cmd
+}
+
+func (m *Model) cycleFocus() {
+	if m.setFocus == focusClientID {
+		m.setFocus = focusDetails
+	} else {
+		m.setFocus = focusPicker
+	}
+	m.focusInputs()
+}
+
+func (m *Model) focusInputs() {
+	m.clientIDInput.Blur()
+	m.detailsInput.Blur()
+	if m.setFocus == focusClientID {
+		m.clientIDInput.Focus()
+	} else if m.setFocus == focusDetails {
+		m.detailsInput.Focus()
+	}
+}
+
+func (m *Model) blurInputs() {
+	m.clientIDInput.Blur()
+	m.detailsInput.Blur()
+}
+
+func (m *Model) saveDiscordInputs() {
+	m.cfg.Discord.ClientID = strings.TrimSpace(m.clientIDInput.Value())
+	if v := strings.TrimSpace(m.detailsInput.Value()); v != "" {
+		m.cfg.Discord.Details = v
+	}
 }
 
 // View ------------------------------------------------------------
@@ -876,19 +1026,45 @@ func volumeBar(vol int, muted bool, width int) string {
 }
 
 func (m Model) viewSettings() string {
-	m.picker.Height = max(m.height-10, 4)
+	m.picker.Height = max(m.height-17, 3)
 	m.help.Width = m.width
 	m.help.ShowAll = m.showHelp
+	d := m.cfg.Discord
+	discordState := badgeOff.Render("OFF")
+	if d.Enabled {
+		discordState = badgeOn.Render("ON")
+	}
+	timeState, btnState := badgeOff.Render("OFF"), badgeOff.Render("OFF")
+	if d.ShowTime {
+		timeState = badgeOn.Render("ON")
+	}
+	if d.ShowButton {
+		btnState = badgeOn.Render("ON")
+	}
+	focusMark := func(f int) string {
+		if m.setFocus == f {
+			return titleStyle.Render("▸ ")
+		}
+		return "  "
+	}
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("⚙ settings"))
 	b.WriteString("\n")
 	b.WriteString(sectionStyle.Render("Music folder: ") + trunc(m.picker.CurrentDirectory, max(m.width-16, 10)) + "\n")
 	b.WriteString(m.picker.View())
 	b.WriteString("\n")
+	b.WriteString(sectionStyle.Render("Discord Rich Presence: ") + discordState + dimStyle.Render("  (d to toggle)") + "\n")
+	b.WriteString(focusMark(focusClientID) + dimStyle.Render("Client ID: ") + m.clientIDInput.View() + "\n")
+	b.WriteString(focusMark(focusDetails) + dimStyle.Render("Details:   ") + m.detailsInput.View() + "\n")
+	b.WriteString("  " + dimStyle.Render("Show time: ") + timeState + dimStyle.Render("  (t)   ") +
+		dimStyle.Render("GitHub button: ") + btnState + dimStyle.Render("  (b)") + "\n")
 	b.WriteString(boxStyle.Render(
-		"Navigate: ↑/↓ or j/k • open: enter/l • up: h/backspace\n" +
-			"Press a to use the current folder • esc to cancel",
+		"Folder: ↑/↓ or j/k • open: enter/l • up: h/backspace • a uses the folder\n" +
+			"Discord: tab edits ID/details • d/t/b toggle • esc back",
 	))
+	if m.status != "" {
+		b.WriteString("\n" + dimStyle.Render("* "+trunc(m.status, max(m.width-4, 10))))
+	}
 	b.WriteString("\n" + dimStyle.Render(m.help.View(keys)))
 	return b.String()
 }
