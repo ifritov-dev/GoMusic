@@ -38,11 +38,14 @@ func TestBuildActivity(t *testing.T) {
 	if a.Type != 2 {
 		t.Fatalf("type = %d, want Listening(2)", a.Type)
 	}
-	if a.Details != "Song — Art" {
-		t.Fatalf("details = %q, want the song line first", a.Details)
+	if a.Details != "Song" {
+		t.Fatalf("details = %q, want title only", a.Details)
 	}
-	if a.State != "Using GoMusic" {
-		t.Fatalf("state = %q, want the status text second", a.State)
+	if a.State != "Art" {
+		t.Fatalf("state = %q, want artist only", a.State)
+	}
+	if len(a.Buttons) != 1 || a.Buttons[0].Label != "GitHub" {
+		t.Fatalf("button wrong: %+v", a.Buttons)
 	}
 	if a.Name != "GoMusic" {
 		t.Fatalf("name = %q", a.Name)
@@ -66,9 +69,13 @@ func TestBuildActivity(t *testing.T) {
 		t.Fatalf("buttons wrong: %+v", a.Buttons)
 	}
 
-	p := buildActivity(Settings{}, TrackInfo{Active: true, Title: "Song", Playing: false})
-	if p.Details != "Paused · Song" || p.Timestamps != nil {
+	p := buildActivity(Settings{}, TrackInfo{Active: true, Title: "Song", Artist: "A", Playing: false})
+	if p.Details != "Paused · Song" || p.State != "A" || p.Timestamps != nil {
 		t.Fatalf("paused wrong: %+v", p)
+	}
+	u := buildActivity(Settings{}, TrackInfo{Active: true, Title: "Song", Playing: true})
+	if u.State != "Unknown Artist" {
+		t.Fatalf("artist fallback wrong: %+v", u)
 	}
 	b := buildActivity(Settings{}, TrackInfo{})
 	if b.Details != "Browsing library" {

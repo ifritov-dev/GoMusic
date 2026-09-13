@@ -253,39 +253,31 @@ func connect(clientID string) (*ipc.Client, string, error) {
 }
 
 func buildActivity(st Settings, info TrackInfo) activity {
-	song := info.Title
-	if info.Artist != "" {
-		song += " — " + info.Artist
-	}
-	if song == "" {
-		song = "GoMusic"
-	}
-	act := activity{
-		Name:  "GoMusic",
-		Type:  2,
-		State: truncRunes(firstNonEmpty(st.Details, "Using GoMusic"), 128),
-	}
+	title := firstNonEmpty(info.Title, "GoMusic")
+	artist := firstNonEmpty(info.Artist, "Unknown Artist")
+	act := activity{Name: "GoMusic", Type: 2}
 	if st.ShowArtwork {
 		// Only reference the asset when it was actually uploaded;
 		// dangling keys degrade the whole card (images AND buttons).
 		act.Assets = &activityAssets{LargeImage: LogoAsset, SmallImage: LogoAsset}
 	}
 	if info.Active {
-		if info.Playing {
-			act.Details = truncRunes(song, 128)
-			if st.ShowTime && info.Length > 0 {
-				start := uint64(time.Now().Add(-info.Position).UnixNano() / 1e6)
-				end := start + uint64(info.Length/1e6)
-				act.Timestamps = &activityTimestamps{Start: &start, End: &end}
-			}
-		} else {
-			act.Details = truncRunes("Paused · "+song, 128)
+		// Main row: song title only; second row: artist.
+		act.Details = truncRunes(title, 128)
+		if !info.Playing {
+			act.Details = truncRunes("Paused · "+title, 128)
+		}
+		act.State = truncRunes(artist, 128)
+		if st.ShowTime && info.Playing && info.Length > 0 {
+			start := uint64(time.Now().Add(-info.Position).UnixNano() / 1e6)
+			end := start + uint64(info.Length/1e6)
+			act.Timestamps = &activityTimestamps{Start: &start, End: &end}
 		}
 	} else {
 		act.Details = "Browsing library"
 	}
 	if st.ShowButton {
-		act.Buttons = []*activityButton{{Label: "GoMusic on GitHub", Url: GitHubURL}}
+		act.Buttons = []*activityButton{{Label: "GitHub", Url: GitHubURL}}
 	}
 	return act
 }

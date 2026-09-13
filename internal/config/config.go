@@ -45,7 +45,7 @@ func Default() *Config {
 		music = "."
 	}
 	return &Config{MusicDir: music, Volume: 80, Shuffle: false, Repeat: RepeatOff,
-		Discord: DiscordConfig{Details: "Using GoMusic", ShowTime: true, ShowButton: true}}
+		Discord: DiscordConfig{Details: "Using GoMusic", ShowTime: true, ShowButton: true, ShowArtwork: true}}
 }
 
 func Path() (string, error) {
@@ -87,6 +87,15 @@ func Load() *Config {
 	}
 	if loaded.Discord.Details == "" {
 		loaded.Discord.Details = "Using GoMusic"
+	}
+	// Artwork defaults on; an explicit false in an existing file wins.
+	var raw struct {
+		Discord map[string]json.RawMessage `json:"discord"`
+	}
+	if err := json.Unmarshal(data, &raw); err == nil && raw.Discord != nil {
+		if _, ok := raw.Discord["show_artwork"]; !ok {
+			loaded.Discord.ShowArtwork = true
+		}
 	}
 	return &loaded
 }

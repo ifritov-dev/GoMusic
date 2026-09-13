@@ -170,14 +170,12 @@ type Model struct {
 	// Settings focus: folder picker or one of the Discord inputs.
 	setFocus      int
 	clientIDInput textinput.Model
-	detailsInput  textinput.Model
 }
 
 // Settings focus zones.
 const (
 	focusPicker = iota
 	focusClientID
-	focusDetails
 )
 
 func New(cfg *config.Config, p *player.Player) Model {
@@ -205,19 +203,13 @@ func New(cfg *config.Config, p *player.Player) Model {
 	ci.CharLimit = 32
 	ci.SetValue(cfg.Discord.ClientID)
 
-	di := textinput.New()
-	di.Prompt = ""
-	di.Placeholder = "Using GoMusic"
-	di.CharLimit = 100
-	di.SetValue(cfg.Discord.Details)
-
 	dm := discord.New()
 	dm.Configure(discordSettingsOf(cfg))
 
 	return Model{
 		cfg: cfg, player: p, list: l, prog: prog, picker: fp,
 		help: help.New(), mode: modeMain, cur: -1,
-		discord: dm, clientIDInput: ci, detailsInput: di,
+		discord: dm, clientIDInput: ci,
 	}
 }
 
@@ -827,36 +819,28 @@ func (m Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 // updateDiscordInput routes messages to the focused settings input.
 func (m Model) updateDiscordInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	if m.setFocus == focusDetails {
-		m.detailsInput, cmd = m.detailsInput.Update(msg)
-	} else {
-		m.clientIDInput, cmd = m.clientIDInput.Update(msg)
-	}
+	m.clientIDInput, cmd = m.clientIDInput.Update(msg)
 	return m, cmd
 }
 
 func (m *Model) cycleFocus() {
 	if m.setFocus == focusClientID {
-		m.setFocus = focusDetails
-	} else {
 		m.setFocus = focusPicker
+	} else {
+		m.setFocus = focusClientID
 	}
 	m.focusInputs()
 }
 
 func (m *Model) focusInputs() {
 	m.clientIDInput.Blur()
-	m.detailsInput.Blur()
 	if m.setFocus == focusClientID {
 		m.clientIDInput.Focus()
-	} else if m.setFocus == focusDetails {
-		m.detailsInput.Focus()
 	}
 }
 
 func (m *Model) blurInputs() {
 	m.clientIDInput.Blur()
-	m.detailsInput.Blur()
 }
 
 func (m Model) discordStatusLine() string {
@@ -878,9 +862,6 @@ func (m Model) discordStatusLine() string {
 
 func (m *Model) saveDiscordInputs() {
 	m.cfg.Discord.ClientID = strings.TrimSpace(m.clientIDInput.Value())
-	if v := strings.TrimSpace(m.detailsInput.Value()); v != "" {
-		m.cfg.Discord.Details = v
-	}
 }
 
 // View ------------------------------------------------------------
@@ -1096,14 +1077,13 @@ func (m Model) viewSettings() string {
 	b.WriteString("\n")
 	b.WriteString(sectionStyle.Render("Discord Rich Presence: ") + discordState + dimStyle.Render("  (d to toggle)") + "\n")
 	b.WriteString(focusMark(focusClientID) + dimStyle.Render("Client ID: ") + m.clientIDInput.View() + "\n")
-	b.WriteString(focusMark(focusDetails) + dimStyle.Render("Status line: ") + m.detailsInput.View() + "\n")
 	b.WriteString("  " + dimStyle.Render("Show time: ") + timeState + dimStyle.Render("  (t)   ") +
 		dimStyle.Render("GitHub button: ") + btnState + dimStyle.Render("  (b)") + "\n")
 	b.WriteString("  " + dimStyle.Render("Artwork: ") + artState + dimStyle.Render("  (i, needs uploaded logo)") + "\n")
 	b.WriteString("  " + dimStyle.Render("Status: ") + m.discordStatusLine() + "\n")
 	b.WriteString(boxStyle.Render(
 		"Folder: ↑/↓ or j/k • open: enter/l • up: h/backspace • a uses the folder\n" +
-			"Discord: tab edits ID/status • d/t/b/i toggle • esc back",
+			"Discord: tab edits ID • d/t/b/i toggle • esc back",
 	))
 	if m.status != "" {
 		b.WriteString("\n" + dimStyle.Render("* "+trunc(m.status, max(m.width-4, 10))))

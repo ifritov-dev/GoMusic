@@ -104,9 +104,12 @@ libraries actually vendored in `go.mod`/`go.sum`.
   any `<appid>` dir containing a `discord-ipc-*` socket.
 - `EffectiveClientID`: custom settings ID wins, else the built-in
   official ID, so presence is zero-config.
-- Layout fix: activity `type: 2` (Discord shows Listening, not
-  Playing); the song line moved to Details (first/prominent row),
-  the settings text to State; both truncated to Discord's 128 chars.
+- Layout: activity `type: 2` (Listening); Details = song title
+  only, State = artist (`Unknown Artist` fallback, no State when
+  idle); both truncated to Discord's 128 chars. The custom status
+  text and its settings input were removed (dead once State became
+  the artist; the config key stays, ignored). Button label is now
+  exactly `GitHub`.
   Buttons were always in the payload (verified on the wire) — a
   missing button means Discord never connected or the `logo` asset
   was never uploaded. Covers stay impossible: only pre-uploaded Art
@@ -120,6 +123,10 @@ libraries actually vendored in `go.mod`/`go.sum`.
   are now omitted unless `ShowArtwork` is on (`i` toggle); default
   wire format is name + type + details + state + timestamps +
   buttons. Explicit `name: GoMusic` also added.
+- Artwork defaults ON (stable logo as demanded): `Default()` sets
+  it and `Load()` backfills configs missing the key, while an
+  explicit `false` still wins. Requires the uploaded `logo` asset —
+  without it the card degrades, buttons included.
 - Perf: staleness gate moved before dialing (startup herd collapses
   to one scan), failed scans cool off 30s, working socket cached —
   steady-state background cost ≈ zero, playback path never blocks. rich-go also had unsynchronized global socket
