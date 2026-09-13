@@ -121,6 +121,12 @@ func TestGainMapping(t *testing.T) {
 	if gain(0) >= gain(50) {
 		t.Fatal("gain(0) should be quieter than gain(50)")
 	}
+	if !math.IsInf(gain(0), -1) {
+		t.Fatalf("gain(0) = %v, want -Inf for true silence", gain(0))
+	}
+	if got := math.Pow(2, gain(0)); got != 0 {
+		t.Fatalf("0%% amplitude multiplier = %v, want exactly 0", got)
+	}
 }
 
 func TestPlayerSilentModeQueue(t *testing.T) {

@@ -80,7 +80,9 @@ func (p *Player) Init() {
 
 func gain(pct int) float64 {
 	if pct <= 0 {
-		return -5 // ~3% gain, effectively silent but not muted
+		// math.Pow(2, -Inf) == 0, so the mixer outputs true
+		// silence (the old -5 floor leaked ~3% amplitude).
+		return math.Inf(-1)
 	}
 	if pct >= 100 {
 		return 0
