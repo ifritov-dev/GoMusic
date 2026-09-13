@@ -71,10 +71,10 @@ type activity struct {
 }
 
 type activityAssets struct {
+	// No LargeText/SmallText: Discord clients may render hover texts
+	// as extra rows, duplicating the song line. Images only.
 	LargeImage string `json:"large_image,omitempty"`
-	LargeText  string `json:"large_text,omitempty"`
 	SmallImage string `json:"small_image,omitempty"`
-	SmallText  string `json:"small_text,omitempty"`
 }
 
 type activityTimestamps struct {
@@ -263,12 +263,9 @@ func buildActivity(st Settings, info TrackInfo) activity {
 		State: truncRunes(firstNonEmpty(st.Details, "Using GoMusic"), 128),
 		Assets: activityAssets{
 			// Discord only renders Art Assets pre-uploaded under the
-			// Application ID, so a local song cover cannot be used;
-			// the logo shows and the song rides in the hover text.
+			// Application ID, so a local song cover cannot be used.
 			LargeImage: LogoAsset,
-			LargeText:  truncRunes(song, 128),
 			SmallImage: LogoAsset,
-			SmallText:  "GoMusic",
 		},
 	}
 	if info.Active {

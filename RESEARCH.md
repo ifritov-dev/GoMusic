@@ -110,7 +110,11 @@ libraries actually vendored in `go.mod`/`go.sum`.
   Buttons were always in the payload (verified on the wire) — a
   missing button means Discord never connected or the `logo` asset
   was never uploaded. Covers stay impossible: only pre-uploaded Art
-  Assets render, so logo + song hover text is the ceiling.
+  Assets render, so logo-only images is the ceiling.
+- Hover texts (`large_text`/`small_text`) removed entirely: some
+  clients render them as phantom rows (song duplicated, or a stray
+  "GoMusic" row when idle). Final payload: type + details + state +
+  images + timestamps + button, nothing else.
 - Perf: staleness gate moved before dialing (startup herd collapses
   to one scan), failed scans cool off 30s, working socket cached —
   steady-state background cost ≈ zero, playback path never blocks. rich-go also had unsynchronized global socket
