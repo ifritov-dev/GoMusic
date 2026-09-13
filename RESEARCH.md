@@ -123,10 +123,10 @@ libraries actually vendored in `go.mod`/`go.sum`.
   are now omitted unless `ShowArtwork` is on (`i` toggle); default
   wire format is name + type + details + state + timestamps +
   buttons. Explicit `name: GoMusic` also added.
-- Artwork defaults ON (stable logo as demanded): `Default()` sets
-  it and `Load()` backfills configs missing the key, while an
-  explicit `false` still wins. Requires the uploaded `logo` asset —
-  without it the card degrades, buttons included.
+- Logo always as `large_image`, `small_image` and the whole
+  `ShowArtwork` toggle removed (setting, UI key, backfill). Requires
+  the uploaded `logo` asset — without it the card degrades,
+  buttons included.
 - Perf: staleness gate moved before dialing (startup herd collapses
   to one scan), failed scans cool off 30s, working socket cached —
   steady-state background cost ≈ zero, playback path never blocks. rich-go also had unsynchronized global socket

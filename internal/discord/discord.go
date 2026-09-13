@@ -42,12 +42,10 @@ func EffectiveClientID(custom string) string {
 // Settings mirrors config.DiscordConfig (kept local to avoid an import
 // cycle towards internal/config).
 type Settings struct {
-	Enabled     bool
-	ClientID    string
-	Details     string
-	ShowTime    bool
-	ShowButton  bool
-	ShowArtwork bool
+	Enabled    bool
+	ClientID   string
+	ShowTime   bool
+	ShowButton bool
 }
 
 // TrackInfo is a snapshot of what is playing right now.
@@ -73,10 +71,9 @@ type activity struct {
 }
 
 type activityAssets struct {
-	// No LargeText/SmallText: Discord clients may render hover texts
-	// as extra rows, duplicating the song line. Images only.
+	// Logo only, always: hover texts render as phantom rows on some
+	// clients, and small_image is unused.
 	LargeImage string `json:"large_image,omitempty"`
-	SmallImage string `json:"small_image,omitempty"`
 }
 
 type activityTimestamps struct {
@@ -255,12 +252,9 @@ func connect(clientID string) (*ipc.Client, string, error) {
 func buildActivity(st Settings, info TrackInfo) activity {
 	title := firstNonEmpty(info.Title, "GoMusic")
 	artist := firstNonEmpty(info.Artist, "Unknown Artist")
-	act := activity{Name: "GoMusic", Type: 2}
-	if st.ShowArtwork {
-		// Only reference the asset when it was actually uploaded;
-		// dangling keys degrade the whole card (images AND buttons).
-		act.Assets = &activityAssets{LargeImage: LogoAsset, SmallImage: LogoAsset}
-	}
+	// Our logo, always: the `logo` Art Asset must be uploaded under
+	// the Application ID (see README).
+	act := activity{Name: "GoMusic", Type: 2, Assets: &activityAssets{LargeImage: LogoAsset}}
 	if info.Active {
 		// Main row: song title only; second row: artist.
 		act.Details = truncRunes(title, 128)

@@ -45,19 +45,19 @@ Config lives in the OS config dir (`~/.config/gomusic/config.json`
 
 `S` → Discord section: `d` enables/disables, `tab` edits the
 Application ID, `t` toggles playback progress, `b` toggles the
-GitHub button, `i` toggles the logo artwork (on by default, needs
-the uploaded `logo` asset), and a status line shows whether
-Discord is connected. GoMusic finds Discord itself — native,
+GitHub button, and a status line shows whether Discord is
+connected. GoMusic finds Discord itself — native,
 Flatpak and Snap installs are auto-detected — including the
 Flatpak sandbox runtime dir (`$XDG_RUNTIME_DIR/app/<id>/`, any UID,
 `ipc-0..9`, plus a `/proc` fallback). No Discord settings needed:
 Rich Presence bypasses game detection entirely (remove any manual
 game entry for gomusic to avoid a duplicate "Playing" row).
 Presence renders as Listening (type 2): main row is the song title,
-second row the artist, plus live progress, our logo, and a GitHub
-button to this repo (no hover texts: some clients render them as
-duplicate rows). The logo asset must be uploaded under the
-Application ID or the card degrades; it updates on track change, pause/resume
+second row the artist, plus live progress, always our logo as the
+large image, and a GitHub button to this repo (no hover texts or
+small image: some clients render them as duplicate rows). The
+`logo` asset must be uploaded under the Application ID or the
+card degrades; it updates on track change, pause/resume
 and seek, and clears on quit. Pushes are generation-gated (no stale
 flashes) and Discord-absent rescans back off, so playback never
 waits on Discord.

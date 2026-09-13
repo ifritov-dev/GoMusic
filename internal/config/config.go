@@ -24,9 +24,6 @@ type DiscordConfig struct {
 	Details    string `json:"details"`   // details line, e.g. "Using GoMusic"
 	ShowTime   bool   `json:"show_time"` // playback progress via timestamps
 	ShowButton bool   `json:"show_button"`
-	// ShowArtwork references the pre-uploaded `logo` Art Asset. Leave
-	// off unless the asset exists, or the card may render degraded.
-	ShowArtwork bool `json:"show_artwork"`
 }
 
 // Config is persisted as JSON in the OS user config dir.
@@ -45,7 +42,7 @@ func Default() *Config {
 		music = "."
 	}
 	return &Config{MusicDir: music, Volume: 80, Shuffle: false, Repeat: RepeatOff,
-		Discord: DiscordConfig{Details: "Using GoMusic", ShowTime: true, ShowButton: true, ShowArtwork: true}}
+		Discord: DiscordConfig{Details: "Using GoMusic", ShowTime: true, ShowButton: true}}
 }
 
 func Path() (string, error) {
@@ -87,15 +84,6 @@ func Load() *Config {
 	}
 	if loaded.Discord.Details == "" {
 		loaded.Discord.Details = "Using GoMusic"
-	}
-	// Artwork defaults on; an explicit false in an existing file wins.
-	var raw struct {
-		Discord map[string]json.RawMessage `json:"discord"`
-	}
-	if err := json.Unmarshal(data, &raw); err == nil && raw.Discord != nil {
-		if _, ok := raw.Discord["show_artwork"]; !ok {
-			loaded.Discord.ShowArtwork = true
-		}
 	}
 	return &loaded
 }

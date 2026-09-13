@@ -33,7 +33,7 @@ func TestEnabledWithoutClientKeepsRetrying(t *testing.T) {
 
 func TestBuildActivity(t *testing.T) {
 	start := time.Now()
-	a := buildActivity(Settings{Details: "Using GoMusic", ShowTime: true, ShowButton: true},
+	a := buildActivity(Settings{ShowTime: true, ShowButton: true},
 		TrackInfo{Active: true, Title: "Song", Artist: "Art", Length: 200 * time.Second, Position: 5 * time.Second, Playing: true})
 	if a.Type != 2 {
 		t.Fatalf("type = %d, want Listening(2)", a.Type)
@@ -50,12 +50,8 @@ func TestBuildActivity(t *testing.T) {
 	if a.Name != "GoMusic" {
 		t.Fatalf("name = %q", a.Name)
 	}
-	if a.Assets != nil {
-		t.Fatalf("default must omit assets: %+v", a.Assets)
-	}
-	art := buildActivity(Settings{ShowArtwork: true}, TrackInfo{Active: true, Title: "Song", Playing: true})
-	if art.Assets == nil || art.Assets.LargeImage != LogoAsset || art.Assets.SmallImage != LogoAsset {
-		t.Fatalf("artwork assets wrong: %+v", art.Assets)
+	if a.Assets == nil || a.Assets.LargeImage != LogoAsset {
+		t.Fatalf("logo asset wrong: %+v", a.Assets)
 	}
 	if a.Timestamps == nil || a.Timestamps.End == nil {
 		t.Fatal("expected start+end timestamps while playing")

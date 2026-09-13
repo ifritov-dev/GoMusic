@@ -216,9 +216,8 @@ func New(cfg *config.Config, p *player.Player) Model {
 func discordSettingsOf(cfg *config.Config) discord.Settings {
 	d := cfg.Discord
 	return discord.Settings{
-		Enabled: d.Enabled, ClientID: d.ClientID, Details: d.Details,
+		Enabled: d.Enabled, ClientID: d.ClientID,
 		ShowTime: d.ShowTime, ShowButton: d.ShowButton,
-		ShowArtwork: d.ShowArtwork,
 	}
 }
 
@@ -801,11 +800,6 @@ func (m Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cfg.Discord.ShowButton = !m.cfg.Discord.ShowButton
 			m.persist()
 			return m, m.syncDiscordCmd()
-		case km.String() == "i":
-			m.cfg.Discord.ShowArtwork = !m.cfg.Discord.ShowArtwork
-			m.persist()
-			m.status = "artwork (needs uploaded logo): " + onOff(m.cfg.Discord.ShowArtwork)
-			return m, tea.Batch(m.syncDiscordCmd(), clearStatusAfter(2*time.Second))
 		}
 	}
 	if m.setFocus != focusPicker {
@@ -1053,15 +1047,12 @@ func (m Model) viewSettings() string {
 	if d.Enabled {
 		discordState = badgeOn.Render("ON")
 	}
-	timeState, btnState, artState := badgeOff.Render("OFF"), badgeOff.Render("OFF"), badgeOff.Render("OFF")
+	timeState, btnState := badgeOff.Render("OFF"), badgeOff.Render("OFF")
 	if d.ShowTime {
 		timeState = badgeOn.Render("ON")
 	}
 	if d.ShowButton {
 		btnState = badgeOn.Render("ON")
-	}
-	if d.ShowArtwork {
-		artState = badgeOn.Render("ON")
 	}
 	focusMark := func(f int) string {
 		if m.setFocus == f {
@@ -1079,11 +1070,10 @@ func (m Model) viewSettings() string {
 	b.WriteString(focusMark(focusClientID) + dimStyle.Render("Client ID: ") + m.clientIDInput.View() + "\n")
 	b.WriteString("  " + dimStyle.Render("Show time: ") + timeState + dimStyle.Render("  (t)   ") +
 		dimStyle.Render("GitHub button: ") + btnState + dimStyle.Render("  (b)") + "\n")
-	b.WriteString("  " + dimStyle.Render("Artwork: ") + artState + dimStyle.Render("  (i, needs uploaded logo)") + "\n")
 	b.WriteString("  " + dimStyle.Render("Status: ") + m.discordStatusLine() + "\n")
 	b.WriteString(boxStyle.Render(
 		"Folder: ↑/↓ or j/k • open: enter/l • up: h/backspace • a uses the folder\n" +
-			"Discord: tab edits ID • d/t/b/i toggle • esc back",
+			"Discord: tab edits ID • d/t/b toggle • esc back",
 	))
 	if m.status != "" {
 		b.WriteString("\n" + dimStyle.Render("* "+trunc(m.status, max(m.width-4, 10))))
