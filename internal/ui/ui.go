@@ -1087,7 +1087,7 @@ func (m Model) viewSettings() string {
 	b.WriteString("\n")
 	b.WriteString(sectionStyle.Render("Discord Rich Presence: ") + discordState + dimStyle.Render("  (d to toggle)") + "\n")
 	b.WriteString(focusMark(focusClientID) + dimStyle.Render("Client ID: ") + m.clientIDInput.View() + "\n")
-	b.WriteString(focusMark(focusDetails) + dimStyle.Render("Details:   ") + m.detailsInput.View() + "\n")
+	b.WriteString(focusMark(focusDetails) + dimStyle.Render("Status line: ") + m.detailsInput.View() + "\n")
 	b.WriteString("  " + dimStyle.Render("Show time: ") + timeState + dimStyle.Render("  (t)   ") +
 		dimStyle.Render("GitHub button: ") + btnState + dimStyle.Render("  (b)") + "\n")
 	b.WriteString("  " + dimStyle.Render("Status: ") + m.discordStatusLine() + "\n")

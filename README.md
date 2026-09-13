@@ -44,16 +44,20 @@ Config lives in the OS config dir (`~/.config/gomusic/config.json`
 ## Discord Rich Presence (optional)
 
 `S` → Discord section: `d` enables/disables, `tab` edits the
-Application ID and details line, `t` toggles playback progress,
+Application ID and status line, `t` toggles playback progress,
 `b` toggles the GitHub button, and a status line shows whether
 Discord is connected. GoMusic finds Discord itself — native,
 Flatpak and Snap installs are auto-detected — including the
 Flatpak sandbox runtime dir (`$XDG_RUNTIME_DIR/app/<id>/`, any UID,
 `ipc-0..9`, plus a `/proc` fallback). No Discord settings needed:
-Rich Presence bypasses game detection entirely. Presence shows
-`Listening to {Song} — {Artist}`, `Using GoMusic`, live progress and
-a button to this repo; it updates on track change, pause/resume and
-seek, and clears on quit.
+Rich Presence bypasses game detection entirely (remove any manual
+game entry for gomusic to avoid a duplicate "Playing" row).
+Presence renders as Listening (type 2) with the song as the main
+row — `{Song} — {Artist}` — plus the status text, live progress
+and a button to this repo; it updates on track change, pause/resume
+and seek, and clears on quit. Pushes are generation-gated (no stale
+flashes) and Discord-absent rescans back off, so playback never
+waits on Discord.
 
 Setup (once): Discord requires every presence to belong to an
 Application — create one at

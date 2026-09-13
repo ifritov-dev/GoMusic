@@ -102,9 +102,18 @@ libraries actually vendored in `go.mod`/`go.sum`.
   sandbox dir `$XDG_RUNTIME_DIR/app/<appid>/` (the actual Flatpak
   Discord socket home) — added via `appSandboxDirs`, which accepts
   any `<appid>` dir containing a `discord-ipc-*` socket.
-- `EffectiveClientID`: custom settings ID wins, else a built-in
-  official ID (`DefaultClientID`, empty until the app is registered)
-  so presence can become zero-config. rich-go also had unsynchronized global socket
+- `EffectiveClientID`: custom settings ID wins, else the built-in
+  official ID, so presence is zero-config.
+- Layout fix: activity `type: 2` (Discord shows Listening, not
+  Playing); the song line moved to Details (first/prominent row),
+  the settings text to State; both truncated to Discord's 128 chars.
+  Buttons were always in the payload (verified on the wire) — a
+  missing button means Discord never connected or the `logo` asset
+  was never uploaded. Covers stay impossible: only pre-uploaded Art
+  Assets render, so logo + song hover text is the ceiling.
+- Perf: staleness gate moved before dialing (startup herd collapses
+  to one scan), failed scans cool off 30s, working socket cached —
+  steady-state background cost ≈ zero, playback path never blocks. rich-go also had unsynchronized global socket
   state (found via `-race`) — the new client serializes frames
   internally. Absent or restarted Discord = silent no-op, next
   Update redials; a ~30s tick re-pushes so Discord started after

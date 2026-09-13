@@ -61,6 +61,8 @@ type TrackInfo struct {
 
 // Presence payload (Discord activity JSON).
 type activity struct {
+	// Type 2 makes Discord render "Listening to" instead of "Playing".
+	Type       int                 `json:"type,omitempty"`
 	Details    string              `json:"details,omitempty"`
 	State      string              `json:"state,omitempty"`
 	Assets     activityAssets      `json:"assets,omitempty"`
@@ -88,6 +90,10 @@ type activityButton struct {
 // Manager holds presence state and (re)connects on demand. If Discord
 // is absent or restarts, every call degrades to a silent no-op and the
 // next Update retries the connection.
+// scanCooldown bounds background work when Discord is absent: a failed
+// full scan suspends rescanning for this long.
+var scanCooldown = 30 * time.Second
+
 type Manager struct {
 	mu   sync.Mutex
 	st   Settings
@@ -95,6 +101,8 @@ type Manager struct {
 	addr string // cached working socket
 	info TrackInfo
 	gen  uint64 // snapshot generation; stale pushes drop themselves
+	// nextScan suppresses rescans while Discord is known-absent.
+	nextScan time.Time
 
 	connected atomic.Bool
 	lastErr   atomic.Value // string
@@ -172,13 +180,26 @@ func (m *Manager) push(st Settings, info TrackInfo, gen uint64) {
 		return
 	}
 	m.mu.Lock()
+	if gen != m.gen {
+		// Superseded before any IPC (collapses the startup herd).
+		m.mu.Unlock()
+		return
+	}
 	cli := m.cli
+	if cli == nil && time.Now().Before(m.nextScan) {
+		// Discord known-absent; skip the rescan entirely.
+		m.mu.Unlock()
+		return
+	}
 	m.mu.Unlock()
 	if cli == nil {
 		var addr string
 		var err error
 		cli, addr, err = connect(EffectiveClientID(st.ClientID))
 		if err != nil {
+			m.mu.Lock()
+			m.nextScan = time.Now().Add(scanCooldown)
+			m.mu.Unlock()
 			m.setStatus(false, "Discord not found")
 			return
 		}
@@ -196,11 +217,12 @@ func (m *Manager) push(st Settings, info TrackInfo, gen uint64) {
 	}
 	m.mu.Lock()
 	if gen != m.gen {
-		// Superseded by a newer snapshot; sending would flash stale
-		// presence (e.g. a late startup push after a track change).
+		// Superseded during dial; sending would flash stale presence.
 		m.mu.Unlock()
 		return
 	}
+	// Success clears any negative cache.
+	m.nextScan = time.Time{}
 	m.mu.Unlock()
 	if err := cli.SetActivity("SET_ACTIVITY", map[string]any{
 		"pid":      os.Getpid(),
@@ -237,32 +259,44 @@ func buildActivity(st Settings, info TrackInfo) activity {
 		song = "GoMusic"
 	}
 	act := activity{
-		Details: firstNonEmpty(st.Details, "Using GoMusic"),
+		Type:  2,
+		State: truncRunes(firstNonEmpty(st.Details, "Using GoMusic"), 128),
 		Assets: activityAssets{
+			// Discord only renders Art Assets pre-uploaded under the
+			// Application ID, so a local song cover cannot be used;
+			// the logo shows and the song rides in the hover text.
 			LargeImage: LogoAsset,
-			LargeText:  song,
+			LargeText:  truncRunes(song, 128),
 			SmallImage: LogoAsset,
 			SmallText:  "GoMusic",
 		},
 	}
 	if info.Active {
 		if info.Playing {
-			act.State = "Listening to " + song
+			act.Details = truncRunes(song, 128)
 			if st.ShowTime && info.Length > 0 {
 				start := uint64(time.Now().Add(-info.Position).UnixNano() / 1e6)
 				end := start + uint64(info.Length/1e6)
 				act.Timestamps = &activityTimestamps{Start: &start, End: &end}
 			}
 		} else {
-			act.State = "Paused · " + song
+			act.Details = truncRunes("Paused · "+song, 128)
 		}
 	} else {
-		act.State = "Browsing library"
+		act.Details = "Browsing library"
 	}
 	if st.ShowButton {
 		act.Buttons = []*activityButton{{Label: "GoMusic on GitHub", Url: GitHubURL}}
 	}
 	return act
+}
+
+func truncRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
 }
 
 func firstNonEmpty(vals ...string) string {

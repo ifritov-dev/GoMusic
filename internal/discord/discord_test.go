@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -34,11 +35,17 @@ func TestBuildActivity(t *testing.T) {
 	start := time.Now()
 	a := buildActivity(Settings{Details: "Using GoMusic", ShowTime: true, ShowButton: true},
 		TrackInfo{Active: true, Title: "Song", Artist: "Art", Length: 200 * time.Second, Position: 5 * time.Second, Playing: true})
-	if a.State != "Listening to Song — Art" {
-		t.Fatalf("state = %q", a.State)
+	if a.Type != 2 {
+		t.Fatalf("type = %d, want Listening(2)", a.Type)
 	}
-	if a.Details != "Using GoMusic" || a.Assets.LargeImage != LogoAsset || a.Assets.SmallImage != LogoAsset {
-		t.Fatalf("assets/details wrong: %+v", a)
+	if a.Details != "Song — Art" {
+		t.Fatalf("details = %q, want the song line first", a.Details)
+	}
+	if a.State != "Using GoMusic" {
+		t.Fatalf("state = %q, want the status text second", a.State)
+	}
+	if a.Assets.LargeImage != LogoAsset || a.Assets.SmallImage != LogoAsset {
+		t.Fatalf("assets wrong: %+v", a.Assets)
 	}
 	if a.Timestamps == nil || a.Timestamps.End == nil {
 		t.Fatal("expected start+end timestamps while playing")
@@ -53,12 +60,15 @@ func TestBuildActivity(t *testing.T) {
 	}
 
 	p := buildActivity(Settings{}, TrackInfo{Active: true, Title: "Song", Playing: false})
-	if p.State != "Paused · Song" || p.Timestamps != nil {
+	if p.Details != "Paused · Song" || p.Timestamps != nil {
 		t.Fatalf("paused wrong: %+v", p)
 	}
 	b := buildActivity(Settings{}, TrackInfo{})
-	if b.State != "Browsing library" {
+	if b.Details != "Browsing library" {
 		t.Fatalf("idle wrong: %+v", b)
+	}
+	if got := buildActivity(Settings{}, TrackInfo{Active: true, Title: strings.Repeat("x", 200), Playing: true}); len([]rune(got.Details)) > 128 {
+		t.Fatalf("details not truncated: %d runes", len([]rune(got.Details)))
 	}
 }
 
@@ -138,12 +148,12 @@ func (g *gatedServer) session(conn net.Conn, slow bool) {
 		var f struct {
 			Args struct {
 				Activity struct {
-					State string `json:"state"`
+					Details string `json:"details"`
 				} `json:"activity"`
 			} `json:"args"`
 		}
 		if err := json.Unmarshal(data, &f); err == nil {
-			g.states <- f.Args.Activity.State
+			g.states <- f.Args.Activity.Details
 		}
 		reply()
 	}
@@ -194,11 +204,11 @@ done:
 	if len(got) == 0 {
 		t.Fatal("no activity received")
 	}
-	if got[len(got)-1] != "Listening to B" {
+	if got[len(got)-1] != "B" {
 		t.Fatalf("last state = %q, want B; all: %v", got[len(got)-1], got)
 	}
 	for i := 1; i < len(got); i++ {
-		if got[i] != "Listening to B" && got[i-1] == "Listening to B" {
+		if got[i] != "B" && got[i-1] == "B" {
 			t.Fatalf("stale state after B: %v", got)
 		}
 	}
