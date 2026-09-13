@@ -30,9 +30,8 @@ const (
 	GitHubURL = "https://github.com/ifritov-dev/GoMusic"
 	// DefaultClientID is the official GoMusic Discord Application ID,
 	// used when the settings field is empty so presence works with
-	// zero setup. Empty until the app is registered — then it just
-	// works out of the box; a custom ID in settings always wins.
-	DefaultClientID = ""
+	// zero setup; a custom ID in settings always wins.
+	DefaultClientID = "1548671143009980418"
 )
 
 // EffectiveClientID prefers a custom ID, falls back to the built-in one.
@@ -95,6 +94,7 @@ type Manager struct {
 	cli  *ipc.Client
 	addr string // cached working socket
 	info TrackInfo
+	gen  uint64 // snapshot generation; stale pushes drop themselves
 
 	connected atomic.Bool
 	lastErr   atomic.Value // string
@@ -109,6 +109,8 @@ func (m *Manager) Configure(st Settings) {
 	m.st = st
 	needLogout := !st.Enabled && m.cli != nil
 	info := m.info
+	m.gen++
+	gen := m.gen
 	m.mu.Unlock()
 
 	if needLogout {
@@ -116,7 +118,7 @@ func (m *Manager) Configure(st Settings) {
 		return
 	}
 	if st.Enabled {
-		go m.push(st, info)
+		go m.push(st, info, gen)
 	}
 }
 
@@ -125,13 +127,14 @@ func (m *Manager) Configure(st Settings) {
 func (m *Manager) Update(info TrackInfo) {
 	m.mu.Lock()
 	m.info = info
-	st := m.st
+	m.gen++
+	gen, st := m.gen, m.st
 	m.mu.Unlock()
 
 	if !st.Enabled {
 		return
 	}
-	go m.push(st, info)
+	go m.push(st, info, gen)
 }
 
 // Shutdown drops the connection. Call on quit; silent when never connected.
@@ -163,7 +166,7 @@ func (m *Manager) logout() {
 	m.setStatus(false, "")
 }
 
-func (m *Manager) push(st Settings, info TrackInfo) {
+func (m *Manager) push(st Settings, info TrackInfo, gen uint64) {
 	if EffectiveClientID(st.ClientID) == "" {
 		m.setStatus(false, "no Application ID set")
 		return
@@ -191,6 +194,14 @@ func (m *Manager) push(st Settings, info TrackInfo) {
 			m.mu.Unlock()
 		}
 	}
+	m.mu.Lock()
+	if gen != m.gen {
+		// Superseded by a newer snapshot; sending would flash stale
+		// presence (e.g. a late startup push after a track change).
+		m.mu.Unlock()
+		return
+	}
+	m.mu.Unlock()
 	if err := cli.SetActivity("SET_ACTIVITY", map[string]any{
 		"pid":      os.Getpid(),
 		"activity": buildActivity(st, info),

@@ -112,6 +112,12 @@ libraries actually vendored in `go.mod`/`go.sum`.
 - Wire-verified with a fake Discord IPC server over a temp
   `XDG_RUNTIME_DIR`: handshake + browsing/play/pause payloads byte-
   exact (state, timestamps, buttons, logo assets).
+- Pushes carry a generation counter; a push superseded before hitting
+  the wire drops itself. Without this, racing startup pushes arrived
+  out of order (a stale `Browsing library` flashed after the current
+  track — caught live, then reproduced deterministically with a slow-
+  handshake fake: `TestStalePushDropped` fails with the gate disabled,
+  passes with it).
 - Timestamps: start = now − position, end = start + length (playing
   only; paused drops them so Discord doesn't keep counting).
 - Images must be Art Assets of the user's Application ID → `logo`
