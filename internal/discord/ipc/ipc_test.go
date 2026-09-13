@@ -145,6 +145,26 @@ func TestCandidatesCoverStandardDirs(t *testing.T) {
 	}
 }
 
+func TestAppSandboxDirs(t *testing.T) {
+	base := t.TempDir()
+	// App exposing a socket counts; plain apps and files don't.
+	withSock := filepath.Join(base, "app", "com.discordapp.Discord")
+	if err := os.MkdirAll(withSock, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(withSock, "discord-ipc-0"), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plain := filepath.Join(base, "app", "org.example.Plain")
+	if err := os.MkdirAll(plain, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dirs := appSandboxDirs(base, "")
+	if len(dirs) != 1 || dirs[0] != withSock {
+		t.Fatalf("sandbox dirs = %v", dirs)
+	}
+}
+
 func TestFlatpakRunDirs(t *testing.T) {
 	base := t.TempDir()
 	app := filepath.Join(base, ".flatpak", "com.discordapp.Discord", "xdg-run")

@@ -44,6 +44,11 @@ func Candidates() []string {
 	for _, d := range flatpakRunDirs(base) {
 		addDir(d)
 	}
+	// Flatpak exposes each sandbox runtime at <runtime>/app/<appid>/
+	// (e.g. .../app/com.discordapp.Discord/discord-ipc-0).
+	for _, d := range appSandboxDirs(os.Getenv("XDG_RUNTIME_DIR"), base) {
+		addDir(d)
+	}
 	addDir(base + "/snap.discord")
 
 	var out []string
@@ -71,6 +76,32 @@ func Candidates() []string {
 func flatpakRunDirs(base string) []string {
 	matches, _ := filepath.Glob(filepath.Join(base, ".flatpak", "*", "xdg-run"))
 	return matches
+}
+
+// appSandboxDirs returns <base>/app/<appid> dirs that actually contain a
+// discord-ipc socket — any sandboxed app (Discord, Vesktop, ...) that
+// exposes its runtime on the host.
+func appSandboxDirs(bases ...string) []string {
+	var out []string
+	for _, base := range bases {
+		if base == "" {
+			continue
+		}
+		entries, err := os.ReadDir(filepath.Join(base, "app"))
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			d := filepath.Join(base, "app", e.Name())
+			if matches, _ := filepath.Glob(filepath.Join(d, "discord-ipc-*")); len(matches) > 0 {
+				out = append(out, d)
+			}
+		}
+	}
+	return out
 }
 
 // procSockets finds discord-ipc sockets through /proc/<pid>/root for

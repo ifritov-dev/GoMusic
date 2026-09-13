@@ -98,7 +98,13 @@ libraries actually vendored in `go.mod`/`go.sum`.
   connects. Ours tries `ipc-0..9` across `$XDG_RUNTIME_DIR`, `/tmp`,
   `/run/user/<uid>`, dynamic-UID `.flatpak/*/xdg-run` + snap dirs,
   plus a `/proc` scan for sockets visible only inside a Discord
-  process's namespace. rich-go also had unsynchronized global socket
+  process's namespace. Missing at first: Flatpak's host-visible
+  sandbox dir `$XDG_RUNTIME_DIR/app/<appid>/` (the actual Flatpak
+  Discord socket home) — added via `appSandboxDirs`, which accepts
+  any `<appid>` dir containing a `discord-ipc-*` socket.
+- `EffectiveClientID`: custom settings ID wins, else a built-in
+  official ID (`DefaultClientID`, empty until the app is registered)
+  so presence can become zero-config. rich-go also had unsynchronized global socket
   state (found via `-race`) — the new client serializes frames
   internally. Absent or restarted Discord = silent no-op, next
   Update redials; a ~30s tick re-pushes so Discord started after

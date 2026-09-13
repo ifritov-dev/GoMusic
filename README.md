@@ -47,17 +47,20 @@ Config lives in the OS config dir (`~/.config/gomusic/config.json`
 Application ID and details line, `t` toggles playback progress,
 `b` toggles the GitHub button, and a status line shows whether
 Discord is connected. GoMusic finds Discord itself — native,
-Flatpak and Snap installs are auto-detected (any UID, `ipc-0..9`,
-sandbox runtime dirs, even sockets visible only via a Discord
-process). Presence shows
+Flatpak and Snap installs are auto-detected — including the
+Flatpak sandbox runtime dir (`$XDG_RUNTIME_DIR/app/<id>/`, any UID,
+`ipc-0..9`, plus a `/proc` fallback). No Discord settings needed:
+Rich Presence bypasses game detection entirely. Presence shows
 `Listening to {Song} — {Artist}`, `Using GoMusic`, live progress and
 a button to this repo; it updates on track change, pause/resume and
 seek, and clears on quit.
 
-Setup (once): create an app at
+Setup (once): Discord requires every presence to belong to an
+Application — create one at
 https://discord.com/developers/applications → Rich Presence → Art
 Assets → upload `assets/GoMusic-bg.png` as `logo`, then paste the
-Application ID into Settings. Note: Discord only renders images
+Application ID into Settings (a future update bakes the official ID
+in as the default so this step disappears). Note: Discord only renders images
 pre-uploaded under your Application ID, so local song covers can't be
 used — the logo is shown and the song rides in the hover text
 on Linux): music folder, volume, shuffle, repeat — all persisted.

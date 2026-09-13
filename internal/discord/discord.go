@@ -28,7 +28,17 @@ import (
 const (
 	LogoAsset = "logo"
 	GitHubURL = "https://github.com/ifritov-dev/GoMusic"
+	// DefaultClientID is the official GoMusic Discord Application ID,
+	// used when the settings field is empty so presence works with
+	// zero setup. Empty until the app is registered — then it just
+	// works out of the box; a custom ID in settings always wins.
+	DefaultClientID = ""
 )
+
+// EffectiveClientID prefers a custom ID, falls back to the built-in one.
+func EffectiveClientID(custom string) string {
+	return firstNonEmpty(custom, DefaultClientID)
+}
 
 // Settings mirrors config.DiscordConfig (kept local to avoid an import
 // cycle towards internal/config).
@@ -154,7 +164,7 @@ func (m *Manager) logout() {
 }
 
 func (m *Manager) push(st Settings, info TrackInfo) {
-	if st.ClientID == "" {
+	if EffectiveClientID(st.ClientID) == "" {
 		m.setStatus(false, "no Application ID set")
 		return
 	}
@@ -164,7 +174,7 @@ func (m *Manager) push(st Settings, info TrackInfo) {
 	if cli == nil {
 		var addr string
 		var err error
-		cli, addr, err = connect(st.ClientID)
+		cli, addr, err = connect(EffectiveClientID(st.ClientID))
 		if err != nil {
 			m.setStatus(false, "Discord not found")
 			return

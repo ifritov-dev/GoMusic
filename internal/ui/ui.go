@@ -858,7 +858,7 @@ func (m Model) discordStatusLine() string {
 	if !d.Enabled {
 		return dimStyle.Render("disabled")
 	}
-	if d.ClientID == "" {
+	if discord.EffectiveClientID(d.ClientID) == "" {
 		return dimStyle.Render("needs an Application ID")
 	}
 	if ok, detail := m.discord.Status(); ok {
