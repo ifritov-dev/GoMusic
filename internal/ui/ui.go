@@ -163,6 +163,11 @@ type Model struct {
 	cur      int // index into tracks, -1 = none
 	playing  bool
 	playGen  int // increments on every play/stop; drops stale trackEndedMsg
+	// Shuffle state: a permutation of track indexes played in order.
+	// Guarantees no repeats within a cycle — a track repeats only
+	// after every other track has played (then a new cycle starts).
+	shuffleOrder []int // permutation of [0,len(tracks)), valid when Shuffle on
+	shufflePos   int   // position in shuffleOrder of cur; -1 = before start/none
 	showHelp bool
 	status   string
 	errText  string
@@ -242,7 +247,7 @@ func New(cfg *config.Config, p *player.Player) Model {
 	}
 	return Model{
 		cfg: cfg, player: p, list: l,
-		mode: modeMain, cur: -1,
+		mode: modeMain, cur: -1, shufflePos: -1,
 		discord: dm, pathInput: pi, urlInput: ui,
 		dirPath: dirPath,
 	}
@@ -525,6 +530,7 @@ func (m *Model) playIndex(i int) tea.Cmd {
 	m.playGen++
 	gen := m.playGen
 	cmds := m.markPlaying(m.cur, i)
+	m.syncShuffleOnPlay(i)
 	m.cur = i
 	m.playing = true
 	m.list.Select(i)
@@ -544,11 +550,202 @@ func (m *Model) stopPlayback() tea.Cmd {
 	m.player.Stop()
 	m.playing = false
 	m.cur = -1
+	m.shuffleOrder = nil
+	m.shufflePos = -1
 	m.artPath, m.artText = "", ""
 	if len(cmds) == 0 {
 		return nil
 	}
 	return tea.Batch(cmds...)
+}
+
+// Shuffle (no repeats within a cycle) ------------------------------
+// When shuffle is on, shuffleOrder holds a random permutation of all
+// track indexes and shufflePos points at the current track inside it.
+// Next walks forward through the permutation, Prev walks back through
+// history. A track can only repeat after every other track has played:
+// at the end of the permutation a new shuffled cycle starts (repeat
+// ALL) or the queue stops (repeat OFF).
+
+func (m *Model) shuffleOrderValid() bool {
+	n := len(m.tracks)
+	if !m.cfg.Shuffle || n == 0 || len(m.shuffleOrder) != n {
+		return false
+	}
+	seen := make([]bool, n)
+	for _, idx := range m.shuffleOrder {
+		if idx < 0 || idx >= n || seen[idx] {
+			return false
+		}
+		seen[idx] = true
+	}
+	return true
+}
+
+// resetShuffle builds a fresh random permutation. first (when >= 0)
+// is moved to the front so the current track never repeats
+// immediately and toggling shuffle on mid-playback keeps playing.
+func (m *Model) resetShuffle(first int) {
+	n := len(m.tracks)
+	if n == 0 {
+		m.shuffleOrder = nil
+		m.shufflePos = -1
+		return
+	}
+	order := make([]int, n)
+	for i := range order {
+		order[i] = i
+	}
+	rand.Shuffle(n, func(a, b int) { order[a], order[b] = order[b], order[a] })
+	m.shuffleOrder = order
+	m.shufflePos = -1
+	if first >= 0 && first < n {
+		for k, v := range order {
+			if v == first {
+			order[0], order[k] = order[k], order[0]
+			break
+		}
+		}
+		m.shufflePos = 0
+	}
+}
+
+// ensureShuffle rebuilds a broken order and re-syncs the position
+// with cur (e.g. after a rescan shifted indexes).
+func (m *Model) ensureShuffle() {
+	if !m.cfg.Shuffle {
+		return
+	}
+	if !m.shuffleOrderValid() {
+		m.resetShuffle(m.cur)
+		return
+	}
+	if m.cur >= 0 {
+		if m.shufflePos < 0 || m.shufflePos >= len(m.shuffleOrder) ||
+			m.shuffleOrder[m.shufflePos] != m.cur {
+			for k, v := range m.shuffleOrder {
+				if v == m.cur {
+					m.shufflePos = k
+					break
+				}
+			}
+		}
+	} else if m.shufflePos != -1 {
+		m.shufflePos = -1
+	}
+}
+
+// syncShuffleOnPlay moves the shuffle position to i. Sequential
+// next/prev steps just advance the position; a manual jump (enter on
+// an arbitrary track) is spliced right after the current position so
+// the already-played prefix stays played and every unplayed track —
+// including the skipped ones — still plays before any repeat.
+func (m *Model) syncShuffleOnPlay(i int) {
+	if !m.cfg.Shuffle {
+		return
+	}
+	if !m.shuffleOrderValid() || i < 0 || i >= len(m.tracks) {
+		m.resetShuffle(i)
+		return
+	}
+	// Sequential step forward/back: just move the cursor.
+	if m.shufflePos >= 0 {
+		if m.shufflePos+1 < len(m.shuffleOrder) && m.shuffleOrder[m.shufflePos+1] == i {
+			m.shufflePos++
+			return
+		}
+		if m.shufflePos-1 >= 0 && m.shuffleOrder[m.shufflePos-1] == i {
+			m.shufflePos--
+			return
+		}
+		if m.shuffleOrder[m.shufflePos] == i {
+			return
+		}
+	}
+	// Manual jump: pull i out of its old slot and splice it right
+	// after the current position.
+	order := m.shuffleOrder
+	at := -1
+	for k, v := range order {
+		if v == i {
+			at = k
+			break
+		}
+	}
+	if at < 0 {
+		m.resetShuffle(i)
+		return
+	}
+	order = append(order[:at], order[at+1:]...)
+	insert := m.shufflePos + 1
+	if insert < 0 {
+		insert = 0
+	}
+	if insert > len(order) {
+		insert = len(order)
+	}
+	order = append(order, 0)
+	copy(order[insert+1:], order[insert:])
+	order[insert] = i
+	m.shuffleOrder = order
+	m.shufflePos = insert
+}
+
+// remapShuffleAfterRescan rebuilds the permutation by path so a
+// library refresh keeps the no-repeat guarantee: surviving tracks
+// keep their relative order (played prefix stays played), new tracks
+// are shuffled into the unplayed tail.
+func (m *Model) remapShuffleAfterRescan(oldPaths []string) {
+	if !m.cfg.Shuffle {
+		m.shuffleOrder = nil
+		m.shufflePos = -1
+		return
+	}
+	newIdx := make(map[string]int, len(m.tracks))
+	for k, t := range m.tracks {
+		newIdx[t.Path] = k
+	}
+	var order []int
+	if len(oldPaths) > 0 {
+		seen := make(map[string]bool, len(oldPaths))
+		for _, p := range oldPaths {
+			if seen[p] {
+			continue
+		}
+		seen[p] = true
+		if k, ok := newIdx[p]; ok {
+			order = append(order, k)
+		}
+	}
+	}
+	// New files: shuffle and append after the surviving prefix.
+	inOrder := make([]bool, len(m.tracks))
+	for _, k := range order {
+		inOrder[k] = true
+	}
+	var fresh []int
+	for k := range m.tracks {
+		if !inOrder[k] {
+			fresh = append(fresh, k)
+		}
+	}
+	rand.Shuffle(len(fresh), func(a, b int) { fresh[a], fresh[b] = fresh[b], fresh[a] })
+	order = append(order, fresh...)
+	m.shuffleOrder = order
+	m.shufflePos = -1
+	if m.cur >= 0 {
+		for k, v := range order {
+			if v == m.cur {
+				m.shufflePos = k
+				break
+			}
+		}
+		if m.shufflePos < 0 {
+			// cur fell out of the order (shouldn't happen since
+			// cur is remapped by path first): start fresh.
+			m.resetShuffle(m.cur)
+		}
+	}
 }
 
 func (m *Model) nextIndex(step int) int {
@@ -557,12 +754,35 @@ func (m *Model) nextIndex(step int) int {
 		return -1
 	}
 	if m.cfg.Shuffle && n > 1 {
-		for {
-			j := rand.Intn(n)
-			if j != m.cur {
-				return j
+		m.ensureShuffle()
+		if step >= 0 {
+			next := m.shufflePos + 1
+			if next < len(m.shuffleOrder) {
+				return m.shuffleOrder[next]
 			}
+			// End of the cycle: every track has played. Repeat
+			// only now — with a brand-new shuffled order.
+			if m.cfg.Repeat == config.RepeatAll {
+				cur := m.cur
+			m.resetShuffle(-1)
+			// Don't play the same track twice in a row across
+				// the cycle boundary.
+				if cur >= 0 && len(m.shuffleOrder) > 1 && m.shuffleOrder[0] == cur {
+					j := 1 + rand.Intn(len(m.shuffleOrder)-1)
+				m.shuffleOrder[0], m.shuffleOrder[j] = m.shuffleOrder[j], m.shuffleOrder[0]
+				}
+				return m.shuffleOrder[0]
+			}
+			return -1
 		}
+		// Prev walks back through shuffle history.
+		if m.shufflePos > 0 {
+			return m.shuffleOrder[m.shufflePos-1]
+		}
+		if m.cur >= 0 {
+			return m.cur
+		}
+		return -1
 	}
 	j := m.cur + step
 	if j < 0 {
@@ -596,6 +816,8 @@ func (m *Model) onTrackEnded(gen int) tea.Cmd {
 			m.playGen++ // end-of-queue waiter is consumed
 			cmds := m.markPlaying(m.cur, -1)
 			m.cur = -1
+			m.shuffleOrder = nil
+			m.shufflePos = -1
 			m.artPath, m.artText = "", ""
 			m.status = "queue finished"
 			cmds = append(cmds, clearStatusAfter(2*time.Second), m.pushPresenceCmd())
@@ -749,6 +971,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cur >= 0 && m.cur < len(m.tracks) {
 			curPath = m.tracks[m.cur].Path
 		}
+		// Snapshot the shuffle cycle as paths so it survives the
+		// index shift below.
+		var oldShufflePaths []string
+		if m.cfg.Shuffle && len(m.shuffleOrder) > 0 {
+			for _, idx := range m.shuffleOrder {
+				if idx >= 0 && idx < len(m.tracks) {
+					oldShufflePaths = append(oldShufflePaths, m.tracks[idx].Path)
+				}
+			}
+		}
 		m.tracks = msg.tracks
 		var resel []tea.Cmd
 		if curPath != "" {
@@ -772,6 +1004,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.playGen++
 			}
 		}
+		m.remapShuffleAfterRescan(oldShufflePaths)
 		m.setItems()
 		if m.cur >= 0 {
 			m.list.Select(m.cur)
@@ -923,6 +1156,14 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, keys.Shuffle):
 			m.cfg.Shuffle = !m.cfg.Shuffle
+			if m.cfg.Shuffle {
+				// New cycle, current track first: it won't repeat
+				// until everything else has played.
+				m.resetShuffle(m.cur)
+			} else {
+				m.shuffleOrder = nil
+				m.shufflePos = -1
+			}
 			m.status = "shuffle " + onOff(m.cfg.Shuffle)
 			m.persist()
 			return m, clearStatusAfter(2 * time.Second)
