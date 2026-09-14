@@ -36,7 +36,7 @@ const (
 // Messages
 type tickMsg time.Time
 type discordRefreshMsg struct{}
-type trackEndedMsg struct{}
+type trackEndedMsg struct{ gen int }
 type libraryMsg struct{ tracks []library.Track }
 type errMsg struct{ err error }
 type statusClearMsg struct{}
@@ -167,6 +167,7 @@ type Model struct {
 	height   int
 	cur      int // index into tracks, -1 = none
 	playing  bool
+	playGen  int // increments on every play/stop; drops stale trackEndedMsg
 	showHelp bool
 	status   string
 	errText  string
@@ -288,11 +289,11 @@ func loadArtCmd(path string, w, h int) tea.Cmd {
 	}
 }
 
-func (m Model) waitTrackEnd() tea.Cmd {
+func (m Model) waitTrackEnd(gen int) tea.Cmd {
 	done := m.player.Done()
 	return func() tea.Msg {
 		<-done
-		return trackEndedMsg{}
+		return trackEndedMsg{gen: gen}
 	}
 }
 
@@ -415,9 +416,11 @@ func (m Model) layout() layout {
 	}
 
 	// Wide window: list + song card side by side. The card gets a
-	// generous ~42% share so art and info breathe on big terminals.
+	// generous ~45% share so art and info breathe on big terminals;
+	// the cap grows with the window so fullscreen art is ~1.5x the
+	// old 56-cell max instead of staying small in a sea of space.
 	lo.arrange = arrangeSide
-	lo.rightW = clamp(W*42/100, 32, 56)
+	lo.rightW = clamp(W*45/100, 32, 84)
 	lo.leftW = max(W-lo.rightW-sideGap, 16)
 	lo.rightW = W - lo.leftW - sideGap
 	// Square art: bound the width by the column, the height by the
@@ -512,6 +515,12 @@ func (m *Model) playIndex(i int) tea.Cmd {
 		m.errText = "cannot play: " + err.Error()
 		return nil
 	}
+	// New generation: any in-flight waitTrackEnd from the previous
+	// track becomes stale (PlayFile closes the old Done channel,
+	// which would otherwise wake the old waiter and fire a bogus
+	// extra advance — the "tracks spin in a circle" bug).
+	m.playGen++
+	gen := m.playGen
 	cmds := m.markPlaying(m.cur, i)
 	m.cur = i
 	m.playing = true
@@ -522,16 +531,21 @@ func (m *Model) playIndex(i int) tea.Cmd {
 		m.artW, m.artH = lo.artW, lo.artH
 		cmds = append(cmds, loadArtCmd(m.tracks[i].Path, lo.artW, lo.artH))
 	}
-	cmds = append(cmds, m.waitTrackEnd(), m.pushPresenceCmd())
+	cmds = append(cmds, m.waitTrackEnd(gen), m.pushPresenceCmd())
 	return tea.Batch(cmds...)
 }
 
-func (m *Model) stopPlayback() {
-	m.markPlaying(m.cur, -1)
+func (m *Model) stopPlayback() tea.Cmd {
+	cmds := m.markPlaying(m.cur, -1)
+	m.playGen++ // invalidate pending trackEndedMsg
 	m.player.Stop()
 	m.playing = false
 	m.cur = -1
 	m.artPath, m.artText = "", ""
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) nextIndex(step int) int {
@@ -561,7 +575,13 @@ func (m *Model) nextIndex(step int) int {
 	return j
 }
 
-func (m *Model) onTrackEnded() tea.Cmd {
+func (m *Model) onTrackEnded(gen int) tea.Cmd {
+	// Stale waiter from a previous track (manual next/prev/enter
+	// closed its Done channel): ignore, or every manual switch
+	// cascades into another auto-advance and the queue spins.
+	if gen != m.playGen {
+		return nil
+	}
 	switch m.cfg.Repeat {
 	case config.RepeatOne:
 		return m.playIndex(m.cur)
@@ -570,11 +590,13 @@ func (m *Model) onTrackEnded() tea.Cmd {
 		if j < 0 {
 			m.player.Stop() // clear length/format/position state
 			m.playing = false
-			m.markPlaying(m.cur, -1)
+			m.playGen++ // end-of-queue waiter is consumed
+			cmds := m.markPlaying(m.cur, -1)
 			m.cur = -1
 			m.artPath, m.artText = "", ""
 			m.status = "queue finished"
-			return tea.Batch(clearStatusAfter(2*time.Second), m.pushPresenceCmd())
+			cmds = append(cmds, clearStatusAfter(2*time.Second), m.pushPresenceCmd())
+			return tea.Batch(cmds...)
 		}
 		return m.playIndex(j)
 	}
@@ -748,7 +770,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case trackEndedMsg:
 		if m.playing && m.mode == modeMain {
-			return m, m.onTrackEnded()
+			return m, m.onTrackEnded(msg.gen)
 		}
 		return m, nil
 
@@ -827,8 +849,8 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case key.Matches(msg, keys.Stop):
-			m.stopPlayback()
-			return m, m.pushPresenceCmd()
+			stopCmd := m.stopPlayback()
+			return m, tea.Batch(stopCmd, m.pushPresenceCmd())
 		case key.Matches(msg, keys.Next):
 			j := m.nextIndex(1)
 			if j >= 0 {
@@ -927,9 +949,9 @@ func (m Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cfg.MusicDir = dir
 			m.persist()
 			m.mode = modeMain
-			m.stopPlayback()
+			stopCmd := m.stopPlayback()
 			m.status = "library: " + dir
-			return m, tea.Batch(m.loadLibrary(dir), clearStatusAfter(3*time.Second))
+			return m, tea.Batch(stopCmd, m.loadLibrary(dir), clearStatusAfter(3*time.Second))
 		case km.String() == "tab":
 			m.setFocus = focusClientID
 			m.focusInputs()

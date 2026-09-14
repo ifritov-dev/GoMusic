@@ -10,7 +10,9 @@ import (
 // Cover art is rendered as truecolor half-blocks: one terminal cell
 // shows two vertically stacked pixels ("▀" with fg=top, bg=bottom).
 // Only the standard library is used (no image scaling dependency):
-// nearest-neighbor sampling is plenty at these tiny sizes.
+// each destination pixel averages its whole source rect (box filter),
+// so big covers downscale smoothly instead of nearest-neighbor
+// shimmering.
 
 // renderCover scales img to cellW×cellH terminal cells and returns the
 // rendered string (cellH lines, no trailing newline). A nil img or
@@ -24,13 +26,23 @@ func renderCover(img image.Image, cellW, cellH int) string {
 	if sw <= 0 || sh <= 0 {
 		return placeholderArt(cellW, cellH)
 	}
+	dw, dh := cellW, cellH*2
+	// Cache one row of source pixels at a time? Covers are small
+	// enough (a few MP) that direct At() calls are fine, but RGBA()
+	// per pixel on NRGBA is cheap — still, preconvert the whole
+	// image once so area averaging doesn't re-decode YCbCr per tap.
+	pix := make([][3]uint32, sw*sh)
+	for y := 0; y < sh; y++ {
+		for x := 0; x < sw; x++ {
+			cr, cg, cb, _ := img.At(b.Min.X+x, b.Min.Y+y).RGBA()
+			pix[y*sw+x] = [3]uint32{cr, cg, cb}
+		}
+	}
 	var sb strings.Builder
 	for y := 0; y < cellH; y++ {
 		for x := 0; x < cellW; x++ {
-			top := sample(img, b, sw, sh, x, y*2, cellW, cellH*2)
-			bot := sample(img, b, sw, sh, x, y*2+1, cellW, cellH*2)
-			r1, g1, b1 := rgb(top)
-			r2, g2, b2 := rgb(bot)
+			r1, g1, b1 := areaAvg(pix, sw, sh, x, y*2, dw, dh)
+			r2, g2, b2 := areaAvg(pix, sw, sh, x, y*2+1, dw, dh)
 			fmt.Fprintf(&sb, "\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm▀",
 				r1, g1, b1, r2, g2, b2)
 		}
@@ -40,6 +52,44 @@ func renderCover(img image.Image, cellW, cellH int) string {
 		}
 	}
 	return sb.String()
+}
+
+// areaAvg averages all source pixels covered by destination pixel
+// (x, y) of a dw×dh grid. Upscaling (rect empty) falls back to the
+// nearest source pixel.
+func areaAvg(pix [][3]uint32, sw, sh, x, y, dw, dh int) (r, g, b int) {
+	x0 := x * sw / dw
+	x1 := (x + 1) * sw / dw
+	y0 := y * sh / dh
+	y1 := (y + 1) * sh / dh
+	if x1 <= x0 {
+		x1 = x0 + 1
+		if x1 > sw {
+			x1, x0 = sw, sw-1
+		}
+	}
+	if y1 <= y0 {
+		y1 = y0 + 1
+		if y1 > sh {
+			y1, y0 = sh, sh-1
+		}
+	}
+	var sr, sg, sb uint64
+	var n uint64
+	for sy := y0; sy < y1; sy++ {
+		for sx := x0; sx < x1; sx++ {
+			p := pix[sy*sw+sx]
+			sr += uint64(p[0])
+			sg += uint64(p[1])
+			sb += uint64(p[2])
+			n++
+		}
+	}
+	if n == 0 {
+		return 0, 0, 0
+	}
+	// pix holds 16-bit RGBA values; >>8 converts to 8-bit.
+	return int((sr / n) >> 8), int((sg / n) >> 8), int((sb / n) >> 8)
 }
 
 func sample(img image.Image, b image.Rectangle, sw, sh, x, y, dw, dh int) color.Color {
