@@ -20,7 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/earendil/gomusic/internal/discord/ipc"
+	"github.com/ifritov-dev/GoMusic/internal/discord/ipc"
 )
 
 // Asset keys (upload assets/GoMusic-bg.png under these names in the

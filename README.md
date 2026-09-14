@@ -84,11 +84,11 @@ on Linux): music folder, volume, shuffle, repeat — all persisted.
 | `n` / `p` | next / previous (`p` restarts track if >3 s in) |
 | `s` | shuffle on/off |
 | `r` | repeat off → all → one |
-| `+` / `-` (or `↑`/`↓`) | volume |
+| `+` / `-` (or `↑`/`↓`) | volume ±5 (`+` / `_` = ±1 precise) |
 | `m` | mute |
 | `←` / `→` (or `h`/`l`) | seek ∓5 s |
 | `/` | filter library |
-| `?` | full help on/off |
+| `k` or `?` | keybinds on/off |
 | `S` | settings (music folder) |
 | `y` | download from YouTube / YouTube Music |
 | `esc` | back |

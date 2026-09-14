@@ -15,12 +15,13 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
-	"github.com/earendil/gomusic/internal/config"
-	"github.com/earendil/gomusic/internal/discord"
-	"github.com/earendil/gomusic/internal/downloader"
-	"github.com/earendil/gomusic/internal/library"
-	"github.com/earendil/gomusic/internal/player"
+	"github.com/ifritov-dev/GoMusic/internal/config"
+	"github.com/ifritov-dev/GoMusic/internal/discord"
+	"github.com/ifritov-dev/GoMusic/internal/downloader"
+	"github.com/ifritov-dev/GoMusic/internal/library"
+	"github.com/ifritov-dev/GoMusic/internal/player"
 )
 
 // Modes
@@ -97,7 +98,7 @@ var keys = keyMap{
 	Download: key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "download")),
 	ApplyDir: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "use folder")),
 	Back:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
-	Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+	Help:     key.NewBinding(key.WithKeys("k", "?"), key.WithHelp("k", "keybinds")),
 	Quit:     key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 }
 
@@ -143,6 +144,12 @@ var (
 	fmtStyle     = lipgloss.NewStyle().Foreground(accent2)
 	queueStyle   = lipgloss.NewStyle().Foreground(dimColor).Bold(true)
 	sectionStyle = lipgloss.NewStyle().Foreground(dimColor).Bold(true)
+	// Active-state pills: an accent background so the state reads at a
+	// glance. pillBold adds bold (playing track, shuffle ON, repeat
+	// ONE); pillSoft stays regular weight (repeat ALL).
+	pillFg   = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#14101F"}
+	pillBold = lipgloss.NewStyle().Bold(true).Foreground(pillFg).Background(accent)
+	pillSoft = lipgloss.NewStyle().Foreground(pillFg).Background(accent)
 )
 
 // Model -----------------------------------------------------------
@@ -194,10 +201,16 @@ func New(cfg *config.Config, p *player.Player) Model {
 	delegate.ShowDescription = true
 	l := list.New(nil, delegate, 60, 15)
 	l.Title = "Library"
-	l.SetShowStatusBar(true)
+	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
 	l.DisableQuitKeybindings()
+	// "k" opens keybinds (see footer) so the list must not steal it:
+	// cursor moves on ↑/↓ only.
+	l.KeyMap.CursorUp.SetKeys("up")
+	l.KeyMap.CursorDown.SetKeys("down")
+	l.KeyMap.PrevPage.SetKeys("pgup")
+	l.KeyMap.NextPage.SetKeys("pgdown")
 
 	prog := progress.New(progress.WithDefaultGradient(), progress.WithoutPercentage())
 
@@ -289,28 +302,71 @@ func clearStatusAfter(d time.Duration) tea.Cmd {
 
 // Layout ----------------------------------------------------------
 
-// layout is the single source of truth for adaptive sizing. Wide
-// terminals get list + sidebar; narrow ones stack list over a compact
-// panel; tiny ones drop the art to keep controls usable.
+// layout is the single source of truth for the frame. The design is
+// borderless (the mock's boxes only illustrated regions):
+//
+//	header / middle / spacer / controls / spacer / volume
+//
+// The middle section compacts to the content (midUsed <= midH): when
+// the track list is shorter than the panel — e.g. after filtering —
+// there is just the content, the spacer, then the controls; leftover
+// rows become invisible filler below the volume line instead of a
+// void between the last track and the controls.
+// Three arrangements adapt to the window:
+//
+//	side    (wide):   track list + song card side by side, split by
+//	                  a blank gap.
+//	stacked (narrow): full-width list over a full-width card with
+//	                  the cover on the left and info beside it,
+//	                  separated by a blank line.
+//	single  (tiny):   list only; playback state stays in the footer
+//	                  so nothing is ever lost.
 type layout struct {
-	wide    bool
-	listW   int
-	listH   int
-	rightW  int // wide mode: right card column width
+	W, H    int
+	midH    int
+	arrange int
+	// Side mode: content column widths (leftW + gap + rightW == W).
+	leftW  int
+	rightW int
+	// Stacked mode: row split (listH + 1 + cardH == midH).
+	listH int
+	cardH int
+	// Compaction: list density, whether every track fits on screen,
+	// rows the list actually needs and middle rows actually rendered
+	// (midUsed <= midH).
+	rowsPer  int
+	showAll  bool
+	listNeed int
+	midUsed  int
+	// Cover art cells. Art renders with half-block "▀" glyphs where
+	// one cell holds two vertical pixels, so visually SQUARE art needs
+	// artW == 2*artH — layout() enforces that ratio and centers the
+	// nested box instead of stretching it full-width.
 	artW    int
 	artH    int
 	showArt bool
-	progW   int
-	volW    int
-	helpH   int
-	statusH int
 }
 
 const (
-	headerLines    = 1
-	controlsLines  = 2 // progress line + buttons line
-	cardTextLines  = 3 // song title, subtitle, format
-	listMinStacked = 7 // reserve list chrome + one full item (list View never clips)
+	arrangeSide = iota
+	arrangeStacked
+	arrangeSingle
+)
+
+// Fixed frame overhead: header, blank under it, spacer, controls,
+// spacer, volume.
+const frameOverhead = 6
+
+// Gap between the list and the song card in side mode.
+const sideGap = 4
+
+const (
+	sideMinW   = 76 // below this width the columns stack vertically
+	singleMaxW = 54 // below this width only the list is shown
+	// Side-mode rows under the art: blank + title + artist +
+	// album + format.
+	sideTextH = 5
+	minArtH   = 4
 )
 
 func (m Model) layout() layout {
@@ -319,48 +375,98 @@ func (m Model) layout() layout {
 		return layout{}
 	}
 	var lo layout
-	if m.errText != "" || m.status != "" {
-		lo.statusH = 1
-	}
-	if m.showHelp {
-		lo.helpH = len(keys.FullHelp())
-	} else {
-		lo.helpH = 1
-	}
-	midH := H - headerLines - controlsLines - lo.statusH - lo.helpH
+	lo.W, lo.H = W, H
+	lo.midH = max(H-frameOverhead, 1)
 
-	lo.progW = max(W-22, 8) // room for " 0:00 / 0:00" + margins
-	lo.volW = clamp(W/14, 6, 12)
+	// Tiny window: list only.
+	if W < singleMaxW || lo.midH < 8 {
+		lo.arrange = arrangeSingle
+		lo.leftW = W
+		lo.rowsPer = rowsPerTrack(lo.midH)
+		lo.listNeed, lo.showAll = neededRows(len(m.list.VisibleItems()), lo.midH, lo.rowsPer)
+		lo.midUsed = min(lo.midH, lo.listNeed)
+		return lo
+	}
 
-	lo.wide = W >= 80 && midH >= 10
-	if lo.wide {
-		lo.rightW = clamp(W*35/100, 26, 64)
-		lo.listW = max(W-lo.rightW-1, 20)
-		lo.listH = max(midH, 4)
-		// Square-ish art that grows with the window.
-		maxW := lo.rightW - 4
-		maxH := midH - cardTextLines
-		lo.artH = max(min(maxH, maxW/2), 0)
-		lo.artW = lo.artH * 2
-		lo.showArt = lo.artH >= 4 && lo.artW >= 8
-		if !lo.showArt {
-			lo.artW, lo.artH = 0, 0
+	// Narrow window: stack the list over the song card.
+	if W < sideMinW {
+		cardH := clamp(lo.midH*40/100, 7, 12)
+		listH := lo.midH - 1 - cardH
+		if listH < 3 {
+			// Too short to stack: list only.
+			lo.arrange = arrangeSingle
+			lo.leftW = W
+			return lo
+		}
+		lo.arrange = arrangeStacked
+		lo.leftW = W
+		lo.listH, lo.cardH = listH, cardH
+		lo.rowsPer = rowsPerTrack(listH)
+		lo.listNeed, lo.showAll = neededRows(len(m.list.VisibleItems()), listH, lo.rowsPer)
+		lo.midUsed = min(lo.midH, lo.listNeed+1+cardH)
+		// Square art beside the text: 1-cell margins, a 2-cell gap
+		// and a readable text column.
+		artH := min((W-22)/2, cardH)
+		if artH >= minArtH && 2*artH >= 8 {
+			lo.artW, lo.artH = 2*artH, artH
+			lo.showArt = true
 		}
 		return lo
 	}
 
-	// Narrow / tiny: library on top, song card below, controls last.
-	// Art budget is whatever is left after protecting the list.
-	maxArtH := midH - cardTextLines - listMinStacked
-	lo.artH = clamp(min(14, maxArtH), 0, 14)
-	lo.artW = min(lo.artH*2, max(W-4, 0))
-	lo.showArt = lo.artH >= 4 && lo.artW >= 8 && W >= 36
-	if !lo.showArt {
-		lo.artW, lo.artH = 0, 0
+	// Wide window: list + song card side by side. The card gets a
+	// generous ~42% share so art and info breathe on big terminals.
+	lo.arrange = arrangeSide
+	lo.rightW = clamp(W*42/100, 32, 56)
+	lo.leftW = max(W-lo.rightW-sideGap, 16)
+	lo.rightW = W - lo.leftW - sideGap
+	// Square art: bound the width by the column, the height by the
+	// text reservation, then lock artW == 2*artH.
+	artH := min(lo.rightW/2, lo.midH-sideTextH)
+	if artH >= minArtH {
+		lo.artW, lo.artH = 2*artH, artH
+		lo.showArt = true
 	}
-	lo.listW = max(W, 10)
-	lo.listH = max(midH-cardTextLines-lo.artH, 3)
+	lo.rowsPer = rowsPerTrack(lo.midH)
+	lo.listNeed, lo.showAll = neededRows(len(m.list.VisibleItems()), lo.midH, lo.rowsPer)
+	cardNeed := sideTextH - 1 // info lines without the art
+	if lo.showArt {
+		cardNeed = lo.artH + sideTextH
+	}
+	lo.midUsed = min(lo.midH, max(lo.listNeed, cardNeed))
 	return lo
+}
+
+// rowsPerTrack picks list density from available height: 3
+// rows/track normally, 2 without the blank separator, title-only
+// when tiny.
+func rowsPerTrack(h int) int {
+	if h < 4 {
+		return 1
+	}
+	if h < 9 {
+		return 2
+	}
+	return 3
+}
+
+// neededRows returns the rows the track list actually needs, plus
+// whether every track fits on screen. Fitting lists skip the blank
+// separator after the final track, so a short list ends with content
+// and exactly one spacer separates it from the controls.
+// n == 0 still needs one row for the empty message.
+func neededRows(n, h, rowsPer int) (need int, showAll bool) {
+	if n == 0 {
+		return 1, false
+	}
+	if n*rowsPer <= h {
+		need = n * rowsPer
+		if rowsPer >= 3 {
+			need-- // no separator after the final track
+		}
+		return need, true
+	}
+	return h, false
 }
 
 // relayout recomputes sizes after a resize and reloads art when the
@@ -369,6 +475,7 @@ func (m *Model) relayout() tea.Cmd {
 	lo := m.layout()
 	m.picker.Height = max(m.height-10, 4)
 	m.help.Width = m.width
+	m.list.SetSize(max(lo.leftW, 10), max(lo.midH, 1))
 	if m.cur < 0 || !lo.showArt {
 		m.artW, m.artH = lo.artW, lo.artH
 		return nil
@@ -377,6 +484,10 @@ func (m *Model) relayout() tea.Cmd {
 		return nil
 	}
 	m.artW, m.artH = lo.artW, lo.artH
+	// Drop art rendered for the old box: cropping it to the new size
+	// would flash a stretched cover for a frame. The placeholder
+	// keeps the exact size until the reload lands.
+	m.artText = ""
 	return loadArtCmd(m.tracks[m.cur].Path, lo.artW, lo.artH)
 }
 
@@ -746,12 +857,20 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.persist()
 			return m, clearStatusAfter(2 * time.Second)
 		case key.Matches(msg, keys.VolUp):
-			m.player.SetVolume(m.player.Volume() + 5)
+			step := 5
+			if msg.String() == "+" {
+				step = 1 // shifted: precise
+			}
+			m.player.SetVolume(m.player.Volume() + step)
 			m.cfg.Volume = m.player.Volume()
 			m.persist()
 			return m, nil
 		case key.Matches(msg, keys.VolDown):
-			m.player.SetVolume(m.player.Volume() - 5)
+			step := 5
+			if msg.String() == "_" {
+				step = 1 // shifted: precise
+			}
+			m.player.SetVolume(m.player.Volume() - step)
 			m.cfg.Volume = m.player.Volume()
 			m.persist()
 			return m, nil
@@ -903,142 +1022,535 @@ func (m Model) View() string {
 
 func (m Model) viewMain() string {
 	lo := m.layout()
-	m.list.SetSize(lo.listW, lo.listH)
-	// At small heights the list chrome (status bar, pagination dots)
-	// would push the list over budget (lipgloss Height pads, never
-	// clips), so collapse it — the list stays fully navigable.
-	compact := lo.listH < 8
-	m.list.SetShowStatusBar(!compact)
-	m.list.SetShowPagination(!compact)
-	m.prog.Width = lo.progW
-	m.help.Width = m.width
-	m.help.ShowAll = m.showHelp
+	W := lo.W
+	if W < 10 {
+		return "loading…"
+	}
+	m.list.SetSize(max(lo.leftW, 10), max(lo.midH, 1))
 
-	header := m.viewHeader()
-	card := m.viewCard(lo)
-
-	var middle string
-	if lo.wide {
-		// Pad the list to its full column width so the song card
-		// docks at the right edge (list View only spans its content).
-		listBox := lipgloss.PlaceHorizontal(lo.listW, lipgloss.Left, m.list.View())
-		card = lipgloss.Place(lo.rightW, lo.listH, lipgloss.Center, lipgloss.Top, card)
-		middle = lipgloss.JoinHorizontal(lipgloss.Top, listBox, " ", card)
+	lines := make([]string, 0, lo.H)
+	// Header with the same 1-cell indent as every other row, plus a
+	// blank line breathing room before the track list.
+	lines = append(lines, " "+padCells(m.headerText(), W-1))
+	lines = append(lines, strings.Repeat(" ", W))
+	if m.showHelp {
+		lines = append(lines, m.helpFrame(lo)...)
+	} else if lo.arrange == arrangeSingle {
+		for _, r := range m.leftRows(lo.leftW, lo.midUsed, lo.rowsPer, lo.showAll) {
+			lines = append(lines, r)
+		}
+	} else if lo.arrange == arrangeStacked {
+		// List over song card, separated by a blank line.
+		for _, r := range m.leftRows(W, lo.listNeed, lo.rowsPer, lo.showAll) {
+			lines = append(lines, r)
+		}
+		lines = append(lines, strings.Repeat(" ", W))
+		for _, r := range m.cardRows(lo) {
+			lines = append(lines, r)
+		}
 	} else {
-		middle = m.list.View() + "\n" + card
+		left := m.leftRows(lo.leftW, lo.midUsed, lo.rowsPer, lo.showAll)
+		right := m.rightRows(lo, lo.midUsed)
+		gap := strings.Repeat(" ", sideGap)
+		for i := 0; i < lo.midUsed; i++ {
+			lines = append(lines, left[i]+gap+right[i])
+		}
 	}
-
-	var sb strings.Builder
-	sb.WriteString(header + "\n")
-	sb.WriteString(middle + "\n")
-	sb.WriteString(m.viewControls(lo) + "\n")
-	if m.errText != "" {
-		sb.WriteString(errStyle.Render("! "+trunc(m.errText, max(m.width-4, 10))) + "\n")
-	} else if m.status != "" {
-		sb.WriteString(dimStyle.Render("* "+trunc(m.status, max(m.width-4, 10))) + "\n")
+	// Spacer / controls / spacer / volume, then invisible filler so
+	// short content still ends at exactly H lines.
+	lines = append(lines, strings.Repeat(" ", W))
+	lines = append(lines, " "+padCells(m.controlsText(W-1), W-1))
+	lines = append(lines, strings.Repeat(" ", W))
+	lines = append(lines, " "+padCells(m.volumeText(W-1), W-1))
+	for len(lines) < lo.H {
+		lines = append(lines, strings.Repeat(" ", W))
 	}
-	sb.WriteString(dimStyle.Render(m.help.View(keys)))
-	return sb.String()
+	// Errors/status surface inside the volume row via volumeText so
+	// the frame stays exactly H lines.
+	return strings.Join(lines, "\n")
 }
 
-func (m Model) viewHeader() string {
-	brand := brandStyle.Render("♪ GoMusic")
-	dirMax := max(m.width-lipgloss.Width(brand)-2, 0)
-	return brand + dimStyle.Render(" "+trunc(m.cfg.MusicDir, dirMax))
+// headerText is "GoMusic   Library: N tracks   <dir>", truncated to fit.
+func (m Model) headerText() string {
+	inner := max(m.width-2, 0)
+	lib := fmt.Sprintf("Library: %d tracks", len(m.tracks))
+	full := "GoMusic   " + lib + "   " + m.cfg.MusicDir
+	if cellWidth(full) <= inner {
+		return brandStyle.Render("GoMusic") + "   " + lib + "   " + dimStyle.Render(m.cfg.MusicDir)
+	}
+	// Shrink the directory first, never the brand/counts.
+	keep := "GoMusic   " + lib + "   "
+	room := max(inner-cellWidth(keep), 0)
+	return brandStyle.Render("GoMusic") + "   " + lib + "   " + dimStyle.Render(truncCells(m.cfg.MusicDir, room))
 }
 
-// viewCard renders the song card: cover art + song name + format.
-func (m Model) viewCard(lo layout) string {
-	// Song card: cover art + song name. Content width depends on mode.
-	cw := m.width
-	if lo.wide {
-		cw = max(lo.rightW-2, 10)
+// leftRows renders the track list with a 1-cell leading indent. The
+// playing track uses "» " on the title and aligns the subtitle
+// under it with 3 leading spaces. Exactly h rows (blank-padded).
+func (m Model) leftRows(w, h, rowsPer int, showAll bool) []string {
+	rows := make([]string, 0, h)
+	if w <= 0 || h <= 0 {
+		return rows
 	}
-	cw = max(cw, 10)
+	// Filter input replaces the first row while typing.
+	if m.list.FilterState() == list.Filtering {
+		q := "/" + m.list.FilterValue() + "▌"
+		rows = append(rows, " "+padCells(truncCells(q, w-1), w-1))
+		for len(rows) < h {
+			rows = append(rows, strings.Repeat(" ", w))
+		}
+		return rows
+	}
+	items := m.list.VisibleItems()
+	sel := m.list.Index()
+	n := len(items)
+	if n == 0 {
+		msg := " no music — press S to choose a folder"
+		if m.list.IsFiltered() {
+			msg = " no matches"
+		}
+		rows = append(rows, " "+padCells(truncCells(msg[1:], w-1), w-1))
+		for len(rows) < h {
+			rows = append(rows, strings.Repeat(" ", w))
+		}
+		return rows
+	}
+	// Fitting lists show every track (no separator after the final
+	// one); longer lists window around the cursor.
+	count := n
+	start := 0
+	if !showAll {
+		count = max(h/rowsPer, 1)
+		if sel >= 0 {
+			start = clamp(sel-count/2, 0, max(n-count, 0))
+		}
+	}
+	for g := 0; g < count && len(rows) < h; g++ {
+		idx := start + g
+		if idx >= n {
+			break
+		}
+		ti, _ := items[idx].(trackItem)
+		playing := m.cur >= 0 && m.cur < len(m.tracks) && m.tracks[m.cur].Path == ti.t.Path
+		cursor := idx == sel
+		title := ti.t.Title
+		sub := trackSub(ti.t)
+		var r1, r2 string
+		if playing {
+			r1 = " » " + truncCells(title, w-3)
+			r2 = "   " + truncCells(sub, w-3)
+		} else {
+			r1 = " " + truncCells(title, w-1)
+			r2 = " " + truncCells(sub, w-1)
+		}
+		if playing {
+			// Full-width highlight pill, bold title: pad first so
+			// the background spans the whole row, then paint.
+			r1 = pillBold.Render(padCells(r1, w))
+			r2 = pillSoft.Render(padCells(r2, w))
+		} else if cursor {
+			r1 = titleStyle.Render(r1)
+			r2 = dimStyle.Render(r2)
+		} else {
+			r2 = dimStyle.Render(r2)
+		}
+		rows = append(rows, padCells(r1, w))
+		if rowsPer >= 2 && len(rows) < h {
+			rows = append(rows, padCells(r2, w))
+		}
+		lastShown := showAll && idx == n-1
+		if rowsPer >= 3 && !lastShown && len(rows) < h {
+			rows = append(rows, strings.Repeat(" ", w))
+		}
+	}
+	for len(rows) < h {
+		rows = append(rows, strings.Repeat(" ", w))
+	}
+	return rows
+}
 
-	var sb strings.Builder
+func trackSub(t library.Track) string {
+	if t.Artist != "" {
+		if t.Album != "" {
+			return t.Artist + " - " + t.Album
+		}
+		return t.Artist
+	}
+	if t.Album != "" {
+		return t.Album
+	}
+	return t.Path
+}
+
+// rightRows renders the side-mode song card: the square cover art
+// (never boxed, never stretched) over the title/artist/album/format
+// lines, which are centered UNDER THE ART — constrained to the art
+// width so a long title can't spill past the cover and look
+// off-center. The whole block is vertically centered. Each row is
+// exactly rightW cells wide.
+func (m Model) rightRows(lo layout, h int) []string {
+	w := max(lo.rightW, 0)
+	rows := make([]string, 0, h)
+	if w <= 0 || h <= 0 {
+		return rows
+	}
+	var content []string
 	if lo.showArt {
 		art := m.artText
 		if art == "" {
 			art = placeholderArt(lo.artW, lo.artH)
 		}
-		sb.WriteString(lipgloss.PlaceHorizontal(cw, lipgloss.Center, art) + "\n")
+		for _, a := range fitCells(art, lo.artW, lo.artH) {
+			content = append(content, centerCells(a, w))
+		}
+		content = append(content, strings.Repeat(" ", w))
 	}
-
-	if m.cur >= 0 && m.cur < len(m.tracks) {
-		t := m.tracks[m.cur]
-		icon := "\u25b6"
-		if m.player.Paused() || !m.playing {
-			icon = "\u23f8"
-		}
-		title := lipgloss.PlaceHorizontal(cw, lipgloss.Center,
-			nowStyle.Render(trunc(icon+" "+t.Title, cw)))
-		sb.WriteString(title + "\n")
-		sub := t.Artist
-		if t.Album != "" {
-			sub += " \u2014 " + t.Album
-		}
-		if sub == "" {
-			sub = trunc(t.Path, cw)
-		}
-		sb.WriteString(lipgloss.PlaceHorizontal(cw, lipgloss.Center,
-			dimStyle.Render(trunc(sub, cw))) + "\n")
-	} else {
-		sb.WriteString(lipgloss.PlaceHorizontal(cw, lipgloss.Center,
-			dimStyle.Render("\u2014 nothing playing \u2014")) + "\n")
-		sb.WriteString(lipgloss.PlaceHorizontal(cw, lipgloss.Center,
-			dimStyle.Render(trunc("enter on a track to play", cw))) + "\n")
+	iw := w
+	if lo.showArt {
+		iw = max(min(lo.artW, w), 8)
 	}
-
-	ext, rate, ch := m.player.Info()
-	sb.WriteString(lipgloss.PlaceHorizontal(cw, lipgloss.Center,
-		fmtStyle.Render(trunc(formatLine(ext, rate, ch), cw))))
-	return sb.String()
+	title, artist, album, format := m.cardText()
+	for _, ln := range []string{
+		centerCells(nowStyle.Render(truncCells(title, iw)), iw),
+		centerCells(dimStyle.Render(truncCells(artist, iw)), iw),
+		centerCells(dimStyle.Render(truncCells(album, iw)), iw),
+		centerCells(fmtStyle.Render(truncCells(format, iw)), iw),
+	} {
+		content = append(content, centerCells(ln, w))
+	}
+	for i := 0; i < max((h-len(content))/2, 0); i++ {
+		rows = append(rows, strings.Repeat(" ", w))
+	}
+	rows = append(rows, content...)
+	for len(rows) < h {
+		rows = append(rows, strings.Repeat(" ", w))
+	}
+	return rows
 }
 
-// viewControls renders the full-width bottom bar: progress + time,
-// then state, volume, toggles and queue position.
-func (m Model) viewControls(lo layout) string {
+// cardRows renders the stacked-mode song card: the square cover on
+// the left with the info lines beside it, both vertically centered,
+// no boxes anywhere. Exactly cardH rows of W cells.
+func (m Model) cardRows(lo layout) []string {
+	fw := max(lo.W, 0)
+	h := lo.cardH
+	rows := make([]string, 0, h)
+	if fw <= 0 || h <= 0 {
+		return rows
+	}
+	title, artist, album, format := m.cardText()
+	text := []string{
+		nowStyle.Render(truncCells(title, fw)),
+		dimStyle.Render(truncCells(artist, fw)),
+		dimStyle.Render(truncCells(album, fw)),
+		fmtStyle.Render(truncCells(format, fw)),
+	}
+	if !lo.showArt {
+		// Text only, centered both ways.
+		for i := 0; i < max((h-len(text))/2, 0) && len(rows) < h; i++ {
+			rows = append(rows, strings.Repeat(" ", fw))
+		}
+		for _, t := range text {
+			if len(rows) >= h {
+				break
+			}
+			rows = append(rows, centerCells(t, fw))
+		}
+		for len(rows) < h {
+			rows = append(rows, strings.Repeat(" ", fw))
+		}
+		return rows
+	}
+	// 1-cell left margin + art + 2-cell gap, text takes the rest.
+	zoneW := 1 + lo.artW + 2
+	textW := fw - zoneW
+	if textW < 8 {
+		// Shouldn't happen (layout reserves the text column), but
+		// never break the frame: fall back to a centered text card.
+		lo.showArt = false
+		return m.cardRows(lo)
+	}
+	for i, t := range text {
+		text[i] = padCells(t, textW)
+	}
+	art := m.artText
+	if art == "" {
+		art = placeholderArt(lo.artW, lo.artH)
+	}
+	aart := fitCells(art, lo.artW, lo.artH)
+	artTopPad := max((h-len(aart))/2, 0)
+	textTopPad := max((h-len(text))/2, 0)
+	for i := 0; i < h; i++ {
+		var l, r string
+		if j := i - artTopPad; j >= 0 && j < len(aart) {
+			l = " " + aart[j] + "  "
+		} else {
+			l = strings.Repeat(" ", zoneW)
+		}
+		if j := i - textTopPad; j >= 0 && j < len(text) {
+			r = text[j]
+		} else {
+			r = strings.Repeat(" ", textW)
+		}
+		rows = append(rows, l+r) // exactly zoneW+textW == fw cells
+	}
+	return rows
+}
+
+func (m Model) cardText() (title, artist, album, format string) {
+	if m.cur >= 0 && m.cur < len(m.tracks) {
+		t := m.tracks[m.cur]
+		title = t.Title
+		artist, album = t.Artist, t.Album
+		if artist == "" && album == "" {
+			artist = t.Path
+		}
+	} else {
+		title = "— nothing playing —"
+		artist = "enter on a track to play"
+	}
+	ext, rate, ch := m.player.Info()
+	format = formatLine(ext, rate, ch)
+	if len(m.tracks) > 0 && m.cur >= 0 {
+		format += fmt.Sprintf("   %d/%d", m.cur+1, len(m.tracks))
+	}
+	return title, artist, album, format
+}
+
+// controlsText is "⟳ ⇄   ⏸   0:18 ───…─── 3:27", bar fills the row.
+func (m Model) controlsText(w int) string {
+	if w <= 10 {
+		return truncCells(m.controlsTextPlain(), w)
+	}
+	rep := dimStyle.Render("⟳")
+	switch m.cfg.Repeat {
+	case config.RepeatOne:
+		rep = pillBold.Render("⟳") // one song: highlighted + bold
+	case config.RepeatAll:
+		rep = pillSoft.Render("⟳") // all: highlighted, regular weight
+	}
+	sh := dimStyle.Render("⇄")
+	if m.cfg.Shuffle {
+		sh = pillBold.Render("⇄") // on: highlighted + bold
+	}
+	play := "■"
+	if m.cur >= 0 && m.playing {
+		if m.player.Paused() {
+			play = "▶"
+		} else {
+			play = "⏸"
+		}
+	}
 	pos, length := m.player.Position(), m.player.Length()
 	pct := 0.0
 	if length > 0 {
 		pct = clampFloat(float64(pos)/float64(length), 0, 1)
 	}
-	timeStr := fmtDur(pos) + " / " + fmtDur(length)
-	m.prog.Width = max(m.width-len(timeStr)-1, 8)
-	line1 := m.prog.ViewAs(pct) + " " + timeStr
+	el, tot := fmtDur(pos), fmtDur(length)
+	prefix := rep + " " + sh + "   " + play + "   " + el + " "
+	suffix := " " + tot
+	barW := max(w-cellWidth(prefix)-cellWidth(suffix), 4)
+	filled := int(pct * float64(barW))
+	bar := titleStyle.Render(strings.Repeat("─", filled)) + dimStyle.Render(strings.Repeat("─", barW-filled))
+	return prefix + bar + suffix
+}
 
-	icon := "\u25a0"
+func (m Model) controlsTextPlain() string {
+	pos, length := m.player.Position(), m.player.Length()
+	play := "■"
 	if m.cur >= 0 && m.playing {
-		icon = "\u25b6"
 		if m.player.Paused() {
-			icon = "\u23f8"
+			play = "▶"
+		} else {
+			play = "⏸"
 		}
 	}
-	vol, muted := m.player.Volume(), m.player.Muted()
-	volBadge := badgeOff.Render(fmt.Sprintf("VOL %d%%", vol))
-	if muted {
-		volBadge = badgeOn.Render("MUTE")
-	}
-	shuf := badgeOff.Render("SHUF")
-	if m.cfg.Shuffle {
-		shuf = badgeOn.Render("SHUF")
-	}
-	rep := badgeOff.Render("REP:" + repeatLabel(m.cfg.Repeat))
-	if m.cfg.Repeat != config.RepeatOff {
-		rep = badgeOn.Render("REP:" + repeatLabel(m.cfg.Repeat))
-	}
-	left := icon + " " + volumeBar(vol, muted, lo.volW) + " " + volBadge + " " + shuf + " " + rep
-	queue := ""
-	if len(m.tracks) > 0 && m.cur >= 0 {
-		queue = queueStyle.Render(fmt.Sprintf("%d/%d", m.cur+1, len(m.tracks)))
-	}
-	line2 := left
-	if queue != "" && lipgloss.Width(left)+lipgloss.Width(queue)+1 <= m.width {
-		line2 += strings.Repeat(" ", m.width-lipgloss.Width(left)-lipgloss.Width(queue)) + queue
-	}
-	return line1 + "\n" + line2
+	return "⟳ ⇄   " + play + "   " + fmtDur(pos) + " " + fmtDur(length)
 }
+
+// volumeText is "Volume: 100% (+/- to change, Shift for precise)"
+// left-aligned with "press k for keybinds" right-aligned.
+// Errors/status surface here so the frame stays exact.
+func (m Model) volumeText(w int) string {
+	hint := "press k for keybinds"
+	var left string
+	if m.errText != "" {
+		left = "! " + m.errText
+	} else if m.status != "" {
+		left = "* " + m.status
+	} else if m.player.Muted() {
+		left = fmt.Sprintf("Volume: muted (+/- to unmute, Shift for precise)")
+	} else {
+		left = fmt.Sprintf("Volume: %d%% (+/- to change, Shift for precise)", m.player.Volume())
+	}
+	if cellWidth(left)+1+cellWidth(hint) > w {
+		// Prefer keeping the hint: shrink the left side.
+		room := max(w-cellWidth(hint)-1, 0)
+		left = truncCells(left, room)
+	}
+	gap := max(w-cellWidth(left)-cellWidth(hint), 1)
+	return left + strings.Repeat(" ", gap) + dimStyle.Render(hint)
+}
+
+// helpFrame renders the keybinds overlay as the full middle section:
+// a centered dialog over blank rows — exactly midH lines so the
+// frame stays exact.
+func (m Model) helpFrame(lo layout) []string {
+	W := lo.W
+	body := []string{
+		"enter        play selected",
+		"space        pause / resume",
+		"x            stop",
+		"n / p        next / previous (p restarts if >3s in)",
+		"s            shuffle on/off",
+		"r            repeat off → all → one",
+		"+ / -        volume ±5  (shift: + / _ = ±1 precise)",
+		"m            mute",
+		"← / →        seek ∓5s  (h / l works too)",
+		"/            filter library",
+		"S            settings (music folder)",
+		"y            download from YouTube",
+		"esc          back",
+		"q            quit",
+	}
+	bw := 0
+	for _, l := range body {
+		bw = max(bw, cellWidth(l))
+	}
+	bw = min(max(bw+4, 20), max(W-6, 20))
+	box := []string{"┌" + strings.Repeat("─", bw-2) + "┐"}
+	box = append(box, "│ "+padCells(titleStyle.Render("keybinds"), bw-3)+"│")
+	for _, l := range body {
+		box = append(box, "│ "+padCells(l, bw-3)+"│")
+	}
+	box = append(box, "└"+strings.Repeat("─", bw-2)+"┘")
+	if len(box) > lo.midH {
+		box = box[:max(lo.midH, 0)] // tiny window: trim, never overflow
+	}
+	pad := max((W-bw)/2, 0)
+	out := []string{}
+	blankTop := max((lo.midH-len(box))/2, 0)
+	blankBot := max(lo.midH-len(box)-blankTop, 0)
+	for i := 0; i < blankTop; i++ {
+		out = append(out, strings.Repeat(" ", W))
+	}
+	for _, b := range box {
+		out = append(out, strings.Repeat(" ", pad)+b+strings.Repeat(" ", max(W-pad-cellWidth(b), 0)))
+	}
+	for i := 0; i < blankBot; i++ {
+		out = append(out, strings.Repeat(" ", W))
+	}
+	return out
+}
+
+// cell helpers (visible-width aware, ANSI-safe via lipgloss.Width).
+func cellWidth(s string) int { return lipgloss.Width(s) }
+
+func padCells(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	wd := lipgloss.Width(s)
+	if wd > w {
+		return truncCells(s, w)
+	}
+	if wd == w {
+		return s
+	}
+	return s + strings.Repeat(" ", w-wd)
+}
+
+func centerCells(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	wd := lipgloss.Width(s)
+	if wd > w {
+		return truncCells(s, w)
+	}
+	if wd == w {
+		return s
+	}
+	left := (w - wd) / 2
+	right := w - wd - left
+	return strings.Repeat(" ", left) + s + strings.Repeat(" ", right)
+}
+
+// truncCells shortens s to n cells, appending … when shortened. It is
+// ANSI-escape aware (escape sequences pass through uncounted) so
+// styled text can never corrupt the frame by miscounting styles as
+// cells — the old rune-based cut turned exactly-fitting styled lines
+// (progress bar, volume hint) into "…" garbage.
+func truncCells(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= n {
+		return s
+	}
+	var b strings.Builder
+	w := 0
+	inEsc := false
+	sawEsc := false
+	for _, r := range s {
+		if inEsc {
+			b.WriteRune(r)
+			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+				inEsc = false
+			}
+			continue
+		}
+		if r == '\x1b' {
+			inEsc = true
+			sawEsc = true
+			b.WriteRune(r)
+			continue
+		}
+		rw := runewidth.RuneWidth(r)
+		if w+rw > n-1 { // reserve one cell for …
+			break
+		}
+		b.WriteRune(r)
+		w += rw
+	}
+	if sawEsc {
+		// The cut may have dropped the terminating reset (e.g. a
+		// resized cover-art line): close it or the background
+		// leaks onto padding and neighbouring text.
+		b.WriteString("\x1b[0m")
+	}
+	b.WriteString("…")
+	return b.String()
+}
+
+// fitCells forces art (lines with ANSI escapes) to exactly w×h cells.
+func fitCells(art string, w, h int) []string {
+	lines := strings.Split(art, "\n")
+	out := make([]string, 0, h)
+	for i := 0; i < h; i++ {
+		var ln string
+		if i < len(lines) {
+			ln = lines[i]
+		}
+		wd := lipgloss.Width(ln)
+		if wd < w {
+			ln += strings.Repeat(" ", w-wd)
+		} else if wd > w {
+			ln = truncCells(ln, w)
+		}
+		out = append(out, ln)
+	}
+	return out
+}
+
+// viewHeader is superseded by headerText (kept for compatibility).
+
+// viewCard renders the song card: cover art + song name + format.
+// viewCard is superseded by rightRows (kept for compatibility).
+
+// viewControls renders the full-width bottom bar: progress + time,
+// then state, volume, toggles and queue position.
+// viewControls is superseded by controlsText (kept for compatibility).
 
 func clampFloat(v, lo, hi float64) float64 {
 	if v < lo {
@@ -1048,25 +1560,6 @@ func clampFloat(v, lo, hi float64) float64 {
 		return hi
 	}
 	return v
-}
-
-func volumeBar(vol int, muted bool, width int) string {
-	if muted {
-		vol = 0
-	}
-	width = max(width, 4)
-	filled := vol * width / 100
-	var b strings.Builder
-	b.WriteString("[")
-	for i := 0; i < width; i++ {
-		if i < filled {
-			b.WriteString("█")
-		} else {
-			b.WriteString("░")
-		}
-	}
-	b.WriteString("]")
-	return lipgloss.NewStyle().Foreground(accent2).Render(b.String())
 }
 
 func (m Model) viewSettings() string {

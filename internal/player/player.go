@@ -22,7 +22,7 @@ import (
 	"github.com/gopxl/beep/v2/vorbis"
 	"github.com/gopxl/beep/v2/wav"
 
-	"github.com/earendil/gomusic/internal/audio"
+	"github.com/ifritov-dev/GoMusic/internal/audio"
 )
 
 // OutRate is the fixed device rate. 48kHz covers all common sources

@@ -6,9 +6,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/earendil/gomusic/internal/config"
-	"github.com/earendil/gomusic/internal/player"
-	"github.com/earendil/gomusic/internal/ui"
+	"github.com/ifritov-dev/GoMusic/internal/config"
+	"github.com/ifritov-dev/GoMusic/internal/player"
+	"github.com/ifritov-dev/GoMusic/internal/ui"
 )
 
 func main() {
