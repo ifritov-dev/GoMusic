@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/url"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,14 +48,28 @@ func ValidURL(raw string) (string, error) {
 }
 
 // Bins locates yt-dlp and ffmpeg (mp3 extraction needs ffmpeg).
+// LookPath resolves .exe via PATHEXT on Windows, so bare names are
+// correct on every OS.
 func Bins() (yt, ff string, err error) {
 	if yt, err = exec.LookPath("yt-dlp"); err != nil {
 		return "", "", fmt.Errorf("yt-dlp not found — " + InstallHint)
 	}
 	if ff, err = exec.LookPath("ffmpeg"); err != nil {
-		return "", "", fmt.Errorf("ffmpeg not found — mp3 extraction needs it (e.g. sudo apt install ffmpeg)")
+		return "", "", fmt.Errorf("ffmpeg not found — mp3 extraction needs it (%s)", ffmpegHint())
 	}
 	return yt, ff, nil
+}
+
+// ffmpegHint is the per-OS one-liner for installing ffmpeg.
+func ffmpegHint() string {
+	switch runtime.GOOS {
+	case "windows":
+		return "e.g. winget install Gyan.FFmpeg"
+	case "darwin":
+		return "e.g. brew install ffmpeg"
+	default:
+		return "e.g. sudo apt install ffmpeg"
+	}
 }
 
 // Check verifies the link resolves and reports the first title plus the
@@ -241,7 +256,8 @@ func Download(ctx context.Context, ytBin, link, dir string) ([]string, error) {
 // Playlists/albums download whole (--yes-playlist makes that explicit
 // even for watch-URLs carrying a list param); the -o template carries
 // the video id so two playlist entries with the same title can never
-// overwrite each other.
+// overwrite each other. The / separator in -o is normalized by yt-dlp
+// on every OS (including Windows), so no filepath.Join is needed here.
 func DownloadWithProgress(ctx context.Context, ytBin, link, dir string, prog *Progress) ([]string, error) {
 	cmd := exec.CommandContext(ctx, ytBin,
 		"-x", "--audio-format", "mp3", "--audio-quality", "0",

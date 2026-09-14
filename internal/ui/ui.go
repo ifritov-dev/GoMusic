@@ -2089,10 +2089,7 @@ func (m Model) updateDownload(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		names := make([]string, 0, len(msg.files))
 		for _, f := range msg.files {
-			if i := strings.LastIndex(f, "/"); i >= 0 {
-				f = f[i+1:]
-			}
-			names = append(names, strings.TrimSuffix(f, ".mp3"))
+			names = append(names, strings.TrimSuffix(filepath.Base(f), ".mp3"))
 		}
 		shown := strings.Join(names, ", ")
 		if len(msg.files) > 3 {

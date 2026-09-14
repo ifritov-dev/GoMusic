@@ -43,12 +43,12 @@ Config lives in the OS config dir (`~/.config/gomusic/config.json`
 
 ## Discord Rich Presence (optional)
 
-`c` → Discord section: `d` enables/disables, `tab` edits the
-Application ID, `t` toggles playback progress, `b` toggles the
-GitHub button, and a status line shows whether Discord is
-connected. GoMusic finds Discord itself — native,
-Flatpak and Snap installs are auto-detected — including the
-Flatpak sandbox runtime dir (`$XDG_RUNTIME_DIR/app/<id>/`, any UID,
+`c` → settings menu: the Discord row toggles Rich Presence on/off
+(enter), and while it is on a GitHub-button row appears. The status
+line shows whether Discord is connected (the official Application ID
+is built in). GoMusic finds Discord itself on every OS — Windows
+named pipes, macOS sockets, native Linux, plus Flatpak and Snap
+installs (sandbox runtime dir `$XDG_RUNTIME_DIR/app/<id>/`, any UID,
 `ipc-0..9`, plus a `/proc` fallback). No Discord settings needed:
 Rich Presence bypasses game detection entirely (remove any manual
 game entry for gomusic to avoid a duplicate "Playing" row).
