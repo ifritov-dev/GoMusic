@@ -93,8 +93,10 @@ on Linux): music folder, volume, shuffle, repeat — all persisted.
 | `esc` | back (closes keybinds / current page) |
 | `q` | quit |
 
-Settings: navigate with `↑/↓` or `j/k`, open with `enter`/`l`,
-up with `h`/`backspace`, press `a` to use the current folder.
+Settings is one menu: pick a row with `↑/↓` or the mouse wheel,
+change it with `enter` (toggles flip at once). The folder row takes
+a pasted/typed path (`~` and quotes work on every OS); `l` opens a
+folders-only browser for picking by hand. `esc` goes back.
 
 ### Download (`y`)
 
@@ -103,7 +105,7 @@ downloads best audio as mp3 straight into your music folder and
 rescans the library. Title/artist tags and cover art are embedded
 (`--add-metadata --embed-thumbnail`; channel name backs up a missing
 artist), so the player, song card and Discord show them right away.
-Playlists and albums download whole; single videos as one track. `esc` backs out (and cancels a running
+Playlists and albums download whole with a live track position + progress bar; single videos as one track. `esc` backs out (and cancels a running
 download). Needs `yt-dlp` and `ffmpeg` installed —
 install yt-dlp: https://github.com/yt-dlp/yt-dlp#installation
 

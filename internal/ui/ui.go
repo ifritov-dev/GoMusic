@@ -4,14 +4,15 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/filepicker"
-	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -138,8 +139,6 @@ var (
 	badgeOn      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#000")).Background(accent).Padding(0, 1)
 	badgeOff     = lipgloss.NewStyle().Foreground(dimColor).Padding(0, 1)
 	errStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444")).Bold(true)
-	boxStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(1, 2)
-	sideStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(0, 1)
 	fmtStyle     = lipgloss.NewStyle().Foreground(accent2)
 	queueStyle   = lipgloss.NewStyle().Foreground(dimColor).Bold(true)
 	sectionStyle = lipgloss.NewStyle().Foreground(dimColor).Bold(true)
@@ -158,9 +157,6 @@ type Model struct {
 	player   *player.Player
 	tracks   []library.Track
 	list     list.Model
-	prog     progress.Model
-	picker   filepicker.Model
-	help     help.Model
 	mode     mode
 	width    int
 	height   int
@@ -179,21 +175,36 @@ type Model struct {
 	discord *discord.Manager
 	// Ticks since start (presence re-pushes every ~30s).
 	ticks int
-	// Settings focus: folder picker or one of the Discord inputs.
-	setFocus      int
-	clientIDInput textinput.Model
+	// Settings is one menu list: the cursor picks a row, enter
+	// changes it. The folder row edits the path inline (paste a
+	// path) or opens a directories-only browser (songs are never
+	// listed); the GitHub button row only shows with Discord on.
+	setCursor     int
+	browsing      bool // folder browser owns the keyboard
+	editingPath   bool // folder path input owns the keyboard
+	dirPath       string   // browser location (absolute, cleaned)
+	dirNames      []string // sorted subdirs, ".." first when escapable
+	dirCursor     int
+	dirOffset     int
+	dirErr        string
+	pathInput     textinput.Model
 	// YouTube download tab.
 	urlInput textinput.Model
 	dlStatus string
 	dlBusy   bool
 	dlGen    int
 	dlCancel context.CancelFunc
+	dlProg   *downloader.Progress // live playlist/single snapshot
 }
 
-// Settings focus zones.
+// Settings menu rows, top to bottom. The GitHub button only
+// appears while Discord Rich Presence is on (see settingRows).
+type settingRow int
+
 const (
-	focusPicker = iota
-	focusClientID
+	rowFolder settingRow = iota
+	rowDiscord
+	rowShowButton
 )
 
 func New(cfg *config.Config, p *player.Player) Model {
@@ -212,20 +223,10 @@ func New(cfg *config.Config, p *player.Player) Model {
 	l.KeyMap.PrevPage.SetKeys("pgup")
 	l.KeyMap.NextPage.SetKeys("pgdown")
 
-	prog := progress.New(progress.WithDefaultGradient(), progress.WithoutPercentage())
-
-	fp := filepicker.New()
-	fp.DirAllowed = false // selection = current dir via "a", keeps enter purely for navigation
-	fp.FileAllowed = false
-	fp.ShowHidden = false
-	fp.CurrentDirectory = cfg.MusicDir
-	fp.Height = 12
-
-	ci := textinput.New()
-	ci.Prompt = ""
-	ci.Placeholder = "Discord Application ID"
-	ci.CharLimit = 32
-	ci.SetValue(cfg.Discord.ClientID)
+	pi := textinput.New()
+	pi.Prompt = ""
+	pi.Placeholder = "/home/user/Music"
+	pi.CharLimit = 4096
 
 	ui := textinput.New()
 	ui.Prompt = ""
@@ -235,10 +236,15 @@ func New(cfg *config.Config, p *player.Player) Model {
 	dm := discord.New()
 	dm.Configure(discordSettingsOf(cfg))
 
+	dirPath := cfg.MusicDir
+	if abs, err := filepath.Abs(dirPath); err == nil {
+		dirPath = abs
+	}
 	return Model{
-		cfg: cfg, player: p, list: l, prog: prog, picker: fp,
-		help: help.New(), mode: modeMain, cur: -1,
-		discord: dm, clientIDInput: ci, urlInput: ui,
+		cfg: cfg, player: p, list: l,
+		mode: modeMain, cur: -1,
+		discord: dm, pathInput: pi, urlInput: ui,
+		dirPath: dirPath,
 	}
 }
 
@@ -253,7 +259,6 @@ func discordSettingsOf(cfg *config.Config) discord.Settings {
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.loadLibrary(m.cfg.MusicDir),
-		m.picker.Init(),
 		tick(),
 		m.syncDiscordCmd(),
 	)
@@ -475,8 +480,7 @@ func neededRows(n, h, rowsPer int) (need int, showAll bool) {
 // art box changed. Returns a Cmd (possibly nil).
 func (m *Model) relayout() tea.Cmd {
 	lo := m.layout()
-	m.picker.Height = max(m.height-10, 4)
-	m.help.Width = m.width
+	m.clampDirOffset()
 	m.list.SetSize(max(lo.leftW, 10), max(lo.midH, 1))
 	if m.cur < 0 || !lo.showArt {
 		m.artW, m.artH = lo.artW, lo.artH
@@ -820,6 +824,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.artText = msg.art
 		}
 		return m, nil
+
+	case dirMsg:
+		if msg.path != m.dirPath {
+			return m, nil // stale (navigated away meanwhile)
+		}
+		if msg.err != nil {
+			m.dirErr = msg.err.Error()
+			m.dirNames = nil
+			m.dirCursor, m.dirOffset = 0, 0
+			return m, nil
+		}
+		m.dirErr = ""
+		m.dirNames = msg.names
+		m.dirCursor = clamp(m.dirCursor, 0, max(len(m.dirNames)-1, 0))
+		m.clampDirOffset()
+		return m, nil
 	}
 
 	if m.mode == modeSettings {
@@ -862,6 +882,9 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Download):
 			m.mode = modeDownload
 			m.urlInput.Focus()
+			if !m.dlBusy {
+				m.dlProg = nil
+			}
 			if _, _, err := downloader.Bins(); err != nil {
 				m.dlStatus = err.Error()
 			} else if m.dlStatus == "" {
@@ -870,10 +893,12 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 		case key.Matches(msg, keys.Settings):
 			m.mode = modeSettings
-			m.picker.CurrentDirectory = m.cfg.MusicDir
-			m.setFocus = focusPicker
-			m.blurInputs()
-			return m, m.picker.Init()
+			m.setCursor = 0
+			m.browsing = false
+			m.editingPath = false
+			m.pathInput.Blur()
+			m.resetDirBrowser(m.cfg.MusicDir)
+			return m, nil
 		case key.Matches(msg, keys.PlayPause):
 			if m.cur < 0 {
 				return m, m.playSelected()
@@ -957,27 +982,49 @@ func (m *Model) playSelected() tea.Cmd {
 func (m Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if km, ok := msg.(tea.KeyMsg); ok {
 		if key.Matches(km, keys.Quit) {
-			m.saveDiscordInputs()
 			m.persist()
 			m.discord.Shutdown()
 			return m, tea.Quit
 		}
-		if m.setFocus != focusPicker {
-			// Typing in a Discord input: esc/enter/tab blurs,
-			// everything else goes to the input.
-			if key.Matches(km, keys.Back) || km.Type == tea.KeyEnter || km.String() == "tab" {
-				m.saveDiscordInputs()
-				m.persist()
-				if km.String() == "tab" {
-					m.cycleFocus()
-				} else {
-					m.setFocus = focusPicker
-					m.blurInputs()
-				}
-				return m, m.syncDiscordCmd()
+		// The path input owns the keyboard: enter uses the typed
+		// path, esc cancels, everything else types/pastes.
+		if m.editingPath {
+			if key.Matches(km, keys.Back) {
+				m.editingPath = false
+				m.pathInput.Blur()
+				return m, nil
 			}
-			return m.updateDiscordInput(msg)
+			if km.Type == tea.KeyEnter {
+				return m, m.applyPastedPath()
+			}
+			return m.updatePathInput(msg)
 		}
+		// The folder browser owns the keyboard while open.
+		if m.browsing {
+			switch {
+			case key.Matches(km, keys.Back):
+				m.browsing = false
+				return m, nil
+			case key.Matches(km, keys.Keybinds):
+				m.showHelp = !m.showHelp
+				return m, nil
+			case key.Matches(km, keys.ApplyDir):
+				return m, m.applyMusicDir(m.dirPath)
+			case km.Type == tea.KeyUp:
+				m.moveDirCursor(-1)
+				return m, nil
+			case km.Type == tea.KeyDown:
+				m.moveDirCursor(1)
+				return m, nil
+			case km.Type == tea.KeyEnter, km.String() == "l":
+				return m, m.enterDir()
+			case km.String() == "h", km.Type == tea.KeyBackspace:
+				return m, m.leaveDir()
+			}
+			return m, nil
+		}
+		// The menu list: arrows pick a row, enter changes it, l/→
+		// on the folder row opens the folder browser.
 		switch {
 		case key.Matches(km, keys.Back):
 			m.mode = modeMain
@@ -985,66 +1032,313 @@ func (m Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(km, keys.Keybinds):
 			m.showHelp = !m.showHelp
 			return m, nil
-		case key.Matches(km, keys.ApplyDir):
-			dir := m.picker.CurrentDirectory
-			m.cfg.MusicDir = dir
-			m.persist()
-			m.mode = modeMain
-			stopCmd := m.stopPlayback()
-			m.status = "library: " + dir
-			return m, tea.Batch(stopCmd, m.loadLibrary(dir), clearStatusAfter(3*time.Second))
-		case km.String() == "tab":
-			m.setFocus = focusClientID
-			m.focusInputs()
-			return m, textinput.Blink
-		case km.String() == "d":
-			m.cfg.Discord.Enabled = !m.cfg.Discord.Enabled
-			m.persist()
-			m.status = "discord: " + onOff(m.cfg.Discord.Enabled)
-			return m, tea.Batch(m.syncDiscordCmd(), clearStatusAfter(2*time.Second), discordRefreshAfter(2*time.Second))
-		case km.String() == "t":
-			m.cfg.Discord.ShowTime = !m.cfg.Discord.ShowTime
-			m.persist()
-			return m, m.syncDiscordCmd()
-		case km.String() == "b":
-			m.cfg.Discord.ShowButton = !m.cfg.Discord.ShowButton
-			m.persist()
-			return m, m.syncDiscordCmd()
+		case km.Type == tea.KeyUp:
+			m.moveSetCursor(-1)
+			return m, nil
+		case km.Type == tea.KeyDown:
+			m.moveSetCursor(1)
+			return m, nil
+		case km.Type == tea.KeyEnter:
+			return m, m.activateSetting(false)
+		case km.String() == "l", km.Type == tea.KeyRight:
+			return m, m.activateSetting(true)
 		}
 	}
-	if m.setFocus != focusPicker {
-		return m.updateDiscordInput(msg)
+	// Mouse wheel picks rows like the main track list: one notch,
+	// one row — in the menu and in the folder browser alike.
+	if mm, ok := msg.(tea.MouseMsg); ok && !m.editingPath {
+		switch mm.Button {
+		case tea.MouseButtonWheelUp:
+			if m.browsing {
+				m.moveDirCursor(-1)
+			} else {
+				m.moveSetCursor(-1)
+			}
+		case tea.MouseButtonWheelDown:
+			if m.browsing {
+				m.moveDirCursor(1)
+			} else {
+				m.moveSetCursor(1)
+			}
+		}
+		return m, nil
 	}
+	if m.editingPath {
+		return m.updatePathInput(msg)
+	}
+	return m, nil
+}
+
+// settingRows is the visible menu: the GitHub button only makes
+// sense with Rich Presence on, so it hides otherwise.
+func (m Model) settingRows() []settingRow {
+	rows := []settingRow{rowFolder, rowDiscord}
+	if m.cfg.Discord.Enabled {
+		rows = append(rows, rowShowButton)
+	}
+	return rows
+}
+
+func (m *Model) moveSetCursor(step int) {
+	m.setCursor = clamp(m.setCursor+step, 0, len(m.settingRows())-1)
+}
+
+func (m Model) currentRow() settingRow {
+	rows := m.settingRows()
+	return rows[clamp(m.setCursor, 0, len(rows)-1)]
+}
+
+// activateSetting changes the cursor-picked row: toggles flip at
+// once; the folder row edits the path inline (browse=true opens
+// the folder browser instead, for picking by hand).
+func (m *Model) activateSetting(browse bool) tea.Cmd {
+	switch m.currentRow() {
+	case rowFolder:
+		if browse {
+			m.browsing = true
+			m.resetDirBrowser(m.cfg.MusicDir)
+			return loadDirCmd(m.dirPath)
+		}
+		m.editingPath = true
+		m.pathInput.SetValue(m.cfg.MusicDir)
+		m.pathInput.Focus()
+		return textinput.Blink
+	case rowDiscord:
+		m.cfg.Discord.Enabled = !m.cfg.Discord.Enabled
+		m.persist()
+		m.moveSetCursor(0) // rows may have shrunk (button hides)
+		m.status = "discord: " + onOff(m.cfg.Discord.Enabled)
+		return tea.Batch(m.syncDiscordCmd(), clearStatusAfter(2*time.Second), discordRefreshAfter(2*time.Second))
+	case rowShowButton:
+		m.cfg.Discord.ShowButton = !m.cfg.Discord.ShowButton
+		m.persist()
+		return m.syncDiscordCmd()
+	}
+	return nil
+}
+
+// applyPastedPath validates the typed/pasted folder path and uses
+// it, or reports why not and stays in edit mode.
+func (m *Model) applyPastedPath() tea.Cmd {
+	dir, err := ensureDir(m.pathInput.Value())
+	if err != nil {
+		m.status = err.Error()
+		return clearStatusAfter(3 * time.Second)
+	}
+	return m.applyMusicDir(dir)
+}
+
+// applyMusicDir switches the library to dir from either the
+// pasted path or the folder browser.
+func (m *Model) applyMusicDir(dir string) tea.Cmd {
+	m.cfg.MusicDir = dir
+	m.persist()
+	m.mode = modeMain
+	m.browsing = false
+	m.editingPath = false
+	m.pathInput.Blur()
+	stopCmd := m.stopPlayback()
+	m.status = "library: " + dir
+	return tea.Batch(stopCmd, m.loadLibrary(dir), clearStatusAfter(3*time.Second))
+}
+
+// updatePathInput routes messages to the folder path input.
+func (m Model) updatePathInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	m.picker, cmd = m.picker.Update(msg)
+	m.pathInput, cmd = m.pathInput.Update(msg)
 	return m, cmd
 }
 
-// updateDiscordInput routes messages to the focused settings input.
-func (m Model) updateDiscordInput(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-	m.clientIDInput, cmd = m.clientIDInput.Update(msg)
-	return m, cmd
+// Directory browser (settings) --------------------------------------
+// Only subdirectories are ever listed — songs stay out of settings.
+
+type dirMsg struct {
+	path  string
+	names []string
+	err   error
 }
 
-func (m *Model) cycleFocus() {
-	if m.setFocus == focusClientID {
-		m.setFocus = focusPicker
+func loadDirCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return dirMsg{path: path, err: err}
+		}
+		subs := make([]string, 0, len(entries))
+		for _, e := range entries {
+			if e.IsDir() {
+				subs = append(subs, e.Name())
+			}
+		}
+		sort.Strings(subs)
+		names := make([]string, 0, len(subs)+2)
+		if _, ok := parentDir(path); ok {
+			names = append(names, "..")
+		} else {
+			// Filesystem root: on Windows that is one drive
+			// (C:\) with siblings (D:\) unreachable by "..",
+		// so list every live drive for switching between them.
+			names = append(names, rootVolumes(path)...)
+		}
+		return dirMsg{path: path, names: append(names, subs...)}
+	}
+}
+
+// rootVolumes lists sibling roots at a filesystem root. Only
+// Windows has several (drives); elsewhere it is always empty.
+func rootVolumes(path string) []string {
+	if runtime.GOOS != "windows" {
+		return nil
+	}
+	var vols []string
+	cur := strings.ToUpper(filepath.VolumeName(filepath.Clean(path)))
+	for c := 'A'; c <= 'Z'; c++ {
+		vol := string(c) + `:\`
+		if strings.ToUpper(vol[:2]) == cur {
+			continue // already here, listed via its subdirs
+		}
+		if st, err := os.Stat(vol); err == nil && st.IsDir() {
+			vols = append(vols, vol)
+		}
+	}
+	return vols
+}
+
+// expandPath normalizes a pasted/typed folder path on every OS:
+// surrounding spaces and Explorer-style quotes go away, ~ means
+// home, relatives resolve against the working directory.
+func expandPath(raw string) (string, error) {
+	s := strings.TrimSpace(raw)
+	if len(s) >= 2 {
+		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
+			s = strings.TrimSpace(s[1 : len(s)-1])
+		}
+	}
+	if s == "" {
+		return "", fmt.Errorf("paste a folder path first")
+	}
+	if s == "~" || strings.HasPrefix(s, "~/") || strings.HasPrefix(s, `~\`) {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return "", fmt.Errorf("cannot resolve ~")
+		}
+		s = home + s[1:]
+	}
+	if !filepath.IsAbs(s) {
+		abs, err := filepath.Abs(s)
+		if err != nil {
+			return "", err
+		}
+		s = abs
+	}
+	return filepath.Clean(s), nil
+}
+
+// ensureDir expands raw and requires an existing directory.
+func ensureDir(raw string) (string, error) {
+	p, err := expandPath(raw)
+	if err != nil {
+		return "", err
+	}
+	st, err := os.Stat(p)
+	if err != nil {
+		return "", fmt.Errorf("no such folder: %s", p)
+	}
+	if !st.IsDir() {
+		return "", fmt.Errorf("not a folder: %s", p)
+	}
+	return p, nil
+}
+
+// dirLabel renders a browser entry with the OS separator (drives
+// and roots already end with one, so nothing is appended twice).
+func dirLabel(name string) string {
+	sep := string(filepath.Separator)
+	if name == ".." || (!filepath.IsAbs(name) && !strings.HasSuffix(name, sep)) {
+		return name + sep
+	}
+	return name
+}
+
+func parentDir(path string) (string, bool) {
+	parent := filepath.Dir(filepath.Clean(path))
+	if parent == filepath.Clean(path) {
+		return "", false
+	}
+	return parent, true
+}
+
+func absDir(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Clean(path)
+}
+
+func (m *Model) resetDirBrowser(path string) {
+	m.dirPath = absDir(path)
+	m.dirNames = nil
+	m.dirCursor, m.dirOffset = 0, 0
+	m.dirErr = ""
+}
+
+// browserH is the visible directory row count, derived from the
+// window height with the same formula the folder browser view uses
+// (heading + path + hints around it), so scrolling and rendering
+// always agree.
+func (m Model) browserH() int {
+	room := max(m.height-4, 1)
+	return max(room-3, 3)
+}
+
+func (m *Model) moveDirCursor(step int) {
+	if len(m.dirNames) == 0 {
+		return
+	}
+	m.dirCursor = clamp(m.dirCursor+step, 0, len(m.dirNames)-1)
+	m.clampDirOffset()
+}
+
+func (m *Model) clampDirOffset() {
+	h := m.browserH()
+	if m.dirCursor < m.dirOffset {
+		m.dirOffset = m.dirCursor
+	}
+	if m.dirCursor > m.dirOffset+h-1 {
+		m.dirOffset = m.dirCursor - h + 1
+	}
+	m.dirOffset = max(m.dirOffset, 0)
+}
+
+func (m *Model) enterDir() tea.Cmd {
+	if m.dirCursor < 0 || m.dirCursor >= len(m.dirNames) {
+		return nil
+	}
+	name := m.dirNames[m.dirCursor]
+	if name == ".." {
+		return m.leaveDir()
+	}
+	if filepath.IsAbs(name) {
+		m.dirPath = filepath.Clean(name) // another drive/root
 	} else {
-		m.setFocus = focusClientID
+		m.dirPath = filepath.Join(m.dirPath, name)
 	}
-	m.focusInputs()
+	m.dirNames = nil
+	m.dirCursor, m.dirOffset = 0, 0
+	m.dirErr = ""
+	return loadDirCmd(m.dirPath)
 }
 
-func (m *Model) focusInputs() {
-	m.clientIDInput.Blur()
-	if m.setFocus == focusClientID {
-		m.clientIDInput.Focus()
+func (m *Model) leaveDir() tea.Cmd {
+	parent, ok := parentDir(m.dirPath)
+	if !ok {
+		return nil
 	}
-}
-
-func (m *Model) blurInputs() {
-	m.clientIDInput.Blur()
+	m.dirPath = parent
+	m.dirNames = nil
+	m.dirCursor, m.dirOffset = 0, 0
+	m.dirErr = ""
+	return loadDirCmd(m.dirPath)
 }
 
 func (m Model) discordStatusLine() string {
@@ -1062,10 +1356,6 @@ func (m Model) discordStatusLine() string {
 	} else {
 		return badgeOff.Render("OFFLINE")
 	}
-}
-
-func (m *Model) saveDiscordInputs() {
-	m.cfg.Discord.ClientID = strings.TrimSpace(m.clientIDInput.Value())
 }
 
 // View ------------------------------------------------------------
@@ -1446,24 +1736,28 @@ func (m Model) volumeText(w int) string {
 // helpFrame renders the keybinds overlay as the full middle section:
 // a centered dialog over blank rows — exactly midH lines so the
 // frame stays exact.
+// helpLines is the single source for the keybinds list, shared by
+// the main overlay and the tab overlay.
+var helpLines = []string{
+	"space / p      play / pause",
+	"← / →          previous / next track",
+	"↑ / ↓, wheel   move in the list (enter plays)",
+	"enter          play selected",
+	"+ / -          volume ±5 (shift: ±1 precise)",
+	"a / d          seek -5s / +5s",
+	"s              shuffle on/off",
+	"r              repeat off → all → one",
+	"u              refresh library",
+	"y              download from YouTube",
+	"k              keybinds",
+	"c              settings",
+	"esc            back",
+	"q              quit",
+}
+
 func (m Model) helpFrame(lo layout) []string {
 	W := lo.W
-	body := []string{
-		"space / p      play / pause",
-		"← / →          previous / next track",
-		"↑ / ↓, wheel   move in the list (enter plays)",
-		"enter          play selected",
-		"+ / -          volume ±5 (shift: ±1 precise)",
-		"a / d          seek -5s / +5s",
-		"s              shuffle on/off",
-		"r              repeat off → all → one",
-		"u              refresh library",
-		"y              download from YouTube",
-		"k              keybinds",
-		"c              settings",
-		"esc            back",
-		"q              quit",
-	}
+	body := helpLines
 	bw := 0
 	for _, l := range body {
 		bw = max(bw, cellWidth(l))
@@ -1613,48 +1907,123 @@ func clampFloat(v, lo, hi float64) float64 {
 	return v
 }
 
+// subHeader is the shared frame header for the settings/download
+// tabs: same brand, same 1-cell indent as the main player view.
+func subHeader(section string) string {
+	return brandStyle.Render("GoMusic") + dimStyle.Render("   "+section)
+}
+
+// subView renders the settings/download tabs in the main player
+// frame style: borderless, 1-cell indent, header + blank, body,
+// spacer, the same volume/hint footer — exactly H lines, with no
+// box-drawing glyphs anywhere.
+func (m Model) subView(section string, body []string) string {
+	W, H := m.width, m.height
+	if W < 10 || H < 6 {
+		return padCells(truncCells(subHeader(section), max(W, 1)), max(W, 1))
+	}
+	lines := make([]string, 0, H)
+	lines = append(lines, " "+padCells(subHeader(section), W-1))
+	lines = append(lines, strings.Repeat(" ", W))
+	room := max(H-4, 1)
+	for i := 0; i < room; i++ {
+		ln := ""
+		if i < len(body) {
+			ln = body[i]
+		}
+		lines = append(lines, " "+padCells(ln, W-1))
+	}
+	lines = append(lines, strings.Repeat(" ", W))
+	lines = append(lines, " "+padCells(m.volumeText(W-1), W-1))
+	for len(lines) < H {
+		lines = append(lines, strings.Repeat(" ", W))
+	}
+	return strings.Join(lines[:min(len(lines), H)], "\n")
+}
+
+// subHelpBody shows the keybinds overlay inside the tab frame when
+// "k" is pressed there — same list as the main overlay, no box.
+func (m Model) subHelpBody() []string {
+	body := []string{titleStyle.Render("keybinds"), ""}
+	return append(body, helpLines...)
+}
+
 func (m Model) viewSettings() string {
-	m.picker.Height = max(m.height-17, 3)
-	m.help.Width = m.width
-	m.help.ShowAll = m.showHelp
+	if m.showHelp {
+		return m.subView("Settings", m.subHelpBody())
+	}
+	if m.browsing {
+		return m.subView("Settings", m.folderBrowserBody())
+	}
 	d := m.cfg.Discord
-	discordState := badgeOff.Render("OFF")
-	if d.Enabled {
-		discordState = badgeOn.Render("ON")
+	onOffBadge := func(b bool) string {
+		if b {
+			return badgeOn.Render("ON")
+		}
+		return badgeOff.Render("OFF")
 	}
-	timeState, btnState := badgeOff.Render("OFF"), badgeOff.Render("OFF")
-	if d.ShowTime {
-		timeState = badgeOn.Render("ON")
-	}
-	if d.ShowButton {
-		btnState = badgeOn.Render("ON")
-	}
-	focusMark := func(f int) string {
-		if m.setFocus == f {
+	mark := func(row settingRow) string {
+		if m.currentRow() == row {
 			return titleStyle.Render("▸ ")
 		}
 		return "  "
 	}
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("⚙ settings"))
-	b.WriteString("\n")
-	b.WriteString(sectionStyle.Render("Music folder: ") + trunc(m.picker.CurrentDirectory, max(m.width-16, 10)) + "\n")
-	b.WriteString(m.picker.View())
-	b.WriteString("\n")
-	b.WriteString(sectionStyle.Render("Discord Rich Presence: ") + discordState + dimStyle.Render("  (d to toggle)") + "\n")
-	b.WriteString(focusMark(focusClientID) + dimStyle.Render("Client ID: ") + m.clientIDInput.View() + "\n")
-	b.WriteString("  " + dimStyle.Render("Show time: ") + timeState + dimStyle.Render("  (t)   ") +
-		dimStyle.Render("GitHub button: ") + btnState + dimStyle.Render("  (b)") + "\n")
-	b.WriteString("  " + dimStyle.Render("Status: ") + m.discordStatusLine() + "\n")
-	b.WriteString(boxStyle.Render(
-		"Folder: ↑/↓ or j/k • open: enter/l • up: h/backspace • a uses the folder\n" +
-			"Discord: tab edits ID • d/t/b toggle • esc back",
-	))
-	if m.status != "" {
-		b.WriteString("\n" + dimStyle.Render("* "+trunc(m.status, max(m.width-4, 10))))
+	folderVal := dimStyle.Render(truncCells(m.cfg.MusicDir, max(m.width-18, 1)))
+	if m.editingPath {
+		folderVal = m.pathInput.View()
 	}
-	b.WriteString("\n" + dimStyle.Render(m.help.View(keys)))
-	return b.String()
+	body := []string{
+		mark(rowFolder) + "Music folder: " + folderVal,
+		mark(rowDiscord) + "Discord Rich Presence: " + onOffBadge(d.Enabled),
+	}
+	if d.Enabled {
+		body = append(body, mark(rowShowButton)+"GitHub button: "+onOffBadge(d.ShowButton))
+	}
+	body = append(body, "")
+	body = append(body, "  "+dimStyle.Render("Status: ")+m.discordStatusLine())
+	if m.editingPath {
+		body = append(body, dimStyle.Render("paste/type a path • enter use it • esc cancel"))
+	} else {
+		body = append(body, dimStyle.Render("↑/↓ or wheel choose • enter change • l browse folders • esc back"))
+	}
+	return m.subView("Settings", body)
+}
+
+// folderBrowserBody is the folder-pick sub-mode: heading + path +
+// directories-only rows filling the frame + hints.
+func (m Model) folderBrowserBody() []string {
+	body := []string{
+		sectionStyle.Render("Music folder:"),
+		"  " + dimStyle.Render(truncCells(m.dirPath, max(m.width-4, 1))),
+	}
+	bh := m.browserH()
+	if m.dirErr != "" {
+		body = append(body, "  "+errStyle.Render("! "+truncCells(m.dirErr, max(m.width-5, 1))))
+		for i := 1; i < bh; i++ {
+			body = append(body, "")
+		}
+	} else if len(m.dirNames) == 0 {
+		body = append(body, "  "+dimStyle.Render("…"))
+		for i := 1; i < bh; i++ {
+			body = append(body, "")
+		}
+	} else {
+		for i := 0; i < bh; i++ {
+			idx := m.dirOffset + i
+			if idx >= len(m.dirNames) {
+				body = append(body, "")
+				continue
+			}
+			label := dirLabel(m.dirNames[idx])
+			if idx == m.dirCursor {
+				body = append(body, "  "+titleStyle.Render("▸ "+truncCells(label, max(m.width-7, 1))))
+			} else {
+				body = append(body, "    "+truncCells(label, max(m.width-6, 1)))
+			}
+		}
+	}
+	body = append(body, dimStyle.Render("↑/↓ move • enter open • a use folder • esc back"))
+	return body
 }
 
 // Download (YouTube) ------------------------------------------------
@@ -1684,6 +2053,7 @@ func (m Model) updateDownload(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.dlCancel()
 				m.dlGen++ // in-flight results become stale
 				m.dlBusy = false
+				m.dlProg = nil
 				m.dlStatus = "cancelled"
 			}
 			m.mode = modeMain
@@ -1706,12 +2076,13 @@ func (m Model) updateDownload(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.dlStatus = fmt.Sprintf("found %s — downloading…", trunc(msg.title, 60))
 		}
-		return m, m.dlFetchCmd(msg.gen, msg.link)
+		return m, m.dlFetchCmd(msg.gen, msg.link, msg.count)
 	case dlDoneMsg:
 		if msg.gen != m.dlGen {
 			return m, nil // stale
 		}
 		m.dlBusy = false
+		m.dlProg = nil
 		if msg.err != "" {
 			m.dlStatus = msg.err
 			return m, nil
@@ -1752,6 +2123,7 @@ func (m Model) startDownload() (tea.Model, tea.Cmd) {
 	}
 	m.dlBusy = true
 	m.dlGen++
+	m.dlProg = nil
 	m.dlStatus = "checking link…"
 	ctx, cancel := context.WithCancel(context.Background())
 	m.dlCancel = cancel
@@ -1765,13 +2137,19 @@ func (m Model) startDownload() (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m Model) dlFetchCmd(gen int, link string) tea.Cmd {
+// dlFetchCmd starts the fetch phase. Pointer receiver on purpose:
+// the fetch context's cancel must land on the model the caller
+// returns, or esc during a download would cancel nothing (the old
+// value-receiver version dropped it on the floor).
+func (m *Model) dlFetchCmd(gen int, link string, total int) tea.Cmd {
 	ytBin, _, _ := downloader.Bins()
 	dir := m.cfg.MusicDir
+	prog := downloader.NewProgress(total)
+	m.dlProg = prog
 	ctx, cancel := context.WithCancel(context.Background())
 	m.dlCancel = cancel
 	return func() tea.Msg {
-		files, err := downloader.Download(ctx, ytBin, link, dir)
+		files, err := downloader.DownloadWithProgress(ctx, ytBin, link, dir, prog)
 		if err != nil {
 			return dlDoneMsg{gen: gen, err: err.Error()}
 		}
@@ -1780,18 +2158,45 @@ func (m Model) dlFetchCmd(gen int, link string) tea.Cmd {
 }
 
 func (m Model) viewDownload() string {
-	var b strings.Builder
-	b.WriteString(brandStyle.Render("♪ GoMusic") + dimStyle.Render("  download from YouTube") + "\n\n")
-	b.WriteString("Link:\n" + m.urlInput.View() + "\n\n")
-	if m.dlBusy {
-		b.WriteString(titleStyle.Render("… "+m.dlStatus) + "\n")
-	} else if m.dlStatus != "" {
-		b.WriteString(m.dlStatus + "\n")
+	if m.showHelp {
+		return m.subView("Download", m.subHelpBody())
 	}
-	b.WriteString("\n" + boxStyle.Render(
-		"enter checks the link and downloads mp3 into your music folder\n"+
-			"playlists/albums download whole • esc backs out (cancels a running download)",
-	))
-	b.WriteString("\n" + dimStyle.Render(m.help.View(keys)))
-	return b.String()
+	var body []string
+	body = append(body, sectionStyle.Render("YouTube / YouTube Music link:"))
+	body = append(body, "  "+m.urlInput.View())
+	body = append(body, "")
+	if m.dlBusy {
+		body = append(body, m.dlProgressLines()...)
+	} else if m.dlStatus != "" {
+		body = append(body, truncCells(m.dlStatus, max(m.width-2, 1)))
+	}
+	body = append(body, "")
+	body = append(body, dimStyle.Render("enter downloads mp3 into your music folder • playlists download whole • esc backs out"))
+	return m.subView("Download", body)
+}
+
+// dlProgressLines renders the running download in the player style:
+// track position + title for playlists, one shared bar. The view
+// refreshes on the 500ms tick while yt-dlp streams into dlProg.
+func (m Model) dlProgressLines() []string {
+	total, done, cur, pct := m.dlProg.Snapshot()
+	if m.dlProg == nil || (total <= 1 && cur == "") {
+		return []string{titleStyle.Render("… " + m.dlStatus)}
+	}
+	var out []string
+	if total > 1 {
+		pos := fmt.Sprintf("Track %d of %d", min(done+1, total), total)
+		out = append(out, titleStyle.Render(pos)+dimStyle.Render("  "+truncCells(cur, max(m.width-len(pos)-6, 1))))
+	} else {
+		out = append(out, titleStyle.Render("… "+truncCells(cur, max(m.width-6, 1))))
+	}
+	overall := m.dlProg.Overall()
+	barW := max(m.width-12, 10)
+	filled := int(overall * float64(barW))
+	bar := titleStyle.Render(strings.Repeat("─", filled)) + dimStyle.Render(strings.Repeat("─", barW-filled))
+	out = append(out, "  "+bar+fmt.Sprintf(" %3.0f%%", overall*100))
+	if pct >= 100 {
+		out = append(out, dimStyle.Render("  converting / tagging…"))
+	}
+	return out
 }
