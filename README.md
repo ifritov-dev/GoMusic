@@ -6,8 +6,8 @@ A comfortable, beautiful, lightweight terminal music player in Go,
 built on the [Charm](https://charm.sh) ecosystem (bubbletea, bubbles,
 lipgloss). See [RESEARCH.md](RESEARCH.md) for backend decisions.
 
-- **Controls:** play/pause/stop, next/previous, ±5 s seek, shuffle,
-  repeat (off/all/one), volume + mute, type-to-filter library, `?` full help
+- **Controls:** play/pause, previous/next track, ∓5 s seek, shuffle,
+  repeat (off/all/one), volume, `?` full help
 - **Layout:** library on the left, cover art + song card on the right,
   full-width control bar at the bottom (progress + time, state,
   volume, shuffle/repeat, queue position)
@@ -20,7 +20,7 @@ lipgloss). See [RESEARCH.md](RESEARCH.md) for backend decisions.
   terminals shrink the same arrangement (narrow stacks card under
   the list, tiny hides art and collapses list chrome). The render
   always fits exactly (verified 200×50, 120×32, 90×24, 70×22, 48×14)
-- **Settings:** pick the music folder inside the app (`S`)
+- **Settings:** pick the music folder inside the app (`c`)
 - **Formats:** mp3, flac, wav, ogg/oga — decoded natively, streamed
   (constant memory, no ffmpeg)
 - **Quality:** 48 kHz stereo float32 output, one high-quality resample
@@ -43,7 +43,7 @@ Config lives in the OS config dir (`~/.config/gomusic/config.json`
 
 ## Discord Rich Presence (optional)
 
-`S` → Discord section: `d` enables/disables, `tab` edits the
+`c` → Discord section: `d` enables/disables, `tab` edits the
 Application ID, `t` toggles playback progress, `b` toggles the
 GitHub button, and a status line shows whether Discord is
 connected. GoMusic finds Discord itself — native,
@@ -78,20 +78,19 @@ on Linux): music folder, volume, shuffle, repeat — all persisted.
 
 | Key | Action |
 |---|---|
+| `space` / `p` | play / pause |
+| `←` / `→` | previous / next track |
+| `↑` / `↓` or mouse wheel | move in the list (`enter` plays the highlighted track) |
 | `enter` | play selected |
-| `space` | pause / resume |
-| `x` | stop |
-| `n` / `p` | next / previous (`p` restarts track if >3 s in) |
+| `+` / `-` | volume ±5 (`shift` = ±1 precise) |
+| `a` / `d` | seek -5 s / +5 s |
 | `s` | shuffle on/off |
 | `r` | repeat off → all → one |
-| `+` / `-` (or `↑`/`↓`) | volume ±5 (`+` / `_` = ±1 precise) |
-| `m` | mute |
-| `←` / `→` (or `h`/`l`) | seek ∓5 s |
-| `/` | filter library |
+| `u` | refresh library |
 | `k` or `?` | keybinds on/off |
-| `S` | settings (music folder) |
+| `c` | settings (music folder) |
 | `y` | download from YouTube / YouTube Music |
-| `esc` | back |
+| `esc` | back (closes keybinds / current page) |
 | `q` | quit |
 
 Settings: navigate with `↑/↓` or `j/k`, open with `enter`/`l`,

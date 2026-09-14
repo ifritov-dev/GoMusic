@@ -49,57 +49,56 @@ type artMsg struct {
 // Key bindings ----------------------------------------------------
 
 type keyMap struct {
-	Play     key.Binding
-	Pause    key.Binding
-	Next     key.Binding
-	Prev     key.Binding
-	Shuffle  key.Binding
-	Repeat   key.Binding
-	VolUp    key.Binding
-	VolDown  key.Binding
-	Mute     key.Binding
-	SeekFwd  key.Binding
-	SeekBack key.Binding
-	Settings key.Binding
-	ApplyDir key.Binding
-	Download key.Binding
-	Back     key.Binding
-	Help     key.Binding
-	Quit     key.Binding
-	Stop     key.Binding
+	PlayPause key.Binding
+	Play      key.Binding
+	Next      key.Binding
+	Prev      key.Binding
+	VolUp     key.Binding
+	VolDown   key.Binding
+	SeekFwd   key.Binding
+	SeekBack  key.Binding
+	Shuffle   key.Binding
+	Repeat    key.Binding
+	Refresh   key.Binding
+	Download  key.Binding
+	Settings  key.Binding
+	ApplyDir  key.Binding
+	Back      key.Binding
+	Keybinds  key.Binding
+	Quit      key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Play, k.Pause, k.Next, k.Prev, k.Mute, k.Help, k.Settings, k.Quit}
+	return []key.Binding{k.PlayPause, k.Next, k.Prev, k.Keybinds, k.Settings, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Play, k.Pause, k.Stop, k.Next, k.Prev},
-		{k.Shuffle, k.Repeat, k.VolUp, k.VolDown, k.Mute},
-		{k.SeekFwd, k.SeekBack, k.Settings, k.Download, k.Help, k.Back, k.Quit},
+		{k.PlayPause, k.Play, k.Next, k.Prev},
+		{k.Shuffle, k.Repeat, k.VolUp, k.VolDown},
+		{k.SeekFwd, k.SeekBack, k.Refresh, k.Download},
+		{k.Settings, k.Keybinds, k.Back, k.Quit},
 	}
 }
 
 var keys = keyMap{
-	Play:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "play")),
-	Pause:    key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "pause")),
-	Stop:     key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "stop")),
-	Next:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "next")),
-	Prev:     key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "prev")),
-	Shuffle:  key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "shuffle")),
-	Repeat:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "repeat")),
-	VolUp:    key.NewBinding(key.WithKeys("+", "=", "up"), key.WithHelp("+", "vol+")),
-	VolDown:  key.NewBinding(key.WithKeys("-", "_", "down"), key.WithHelp("-", "vol-")),
-	Mute:     key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mute")),
-	SeekFwd:  key.NewBinding(key.WithKeys("l", "right"), key.WithHelp("→", "+5s")),
-	SeekBack: key.NewBinding(key.WithKeys("h", "left"), key.WithHelp("←", "-5s")),
-	Settings: key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "settings")),
-	Download: key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "download")),
-	ApplyDir: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "use folder")),
-	Back:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
-	Help:     key.NewBinding(key.WithKeys("k", "?"), key.WithHelp("k", "keybinds")),
-	Quit:     key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+	PlayPause: key.NewBinding(key.WithKeys(" ", "p"), key.WithHelp("space/p", "play/pause")),
+	Play:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "play")),
+	Next:      key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "next")),
+	Prev:      key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "prev")),
+	VolUp:     key.NewBinding(key.WithKeys("+", "="), key.WithHelp("+", "vol+")),
+	VolDown:   key.NewBinding(key.WithKeys("-", "_"), key.WithHelp("-", "vol-")),
+	SeekFwd:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "+5s")),
+	SeekBack:  key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "-5s")),
+	Shuffle:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "shuffle")),
+	Repeat:    key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "repeat")),
+	Refresh:   key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "refresh")),
+	Download:  key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "download")),
+	Settings:  key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "settings")),
+	ApplyDir:  key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "use folder")),
+	Back:      key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+	Keybinds:  key.NewBinding(key.WithKeys("k", "?"), key.WithHelp("k", "keybinds")),
+	Quit:      key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 }
 
 // List item -------------------------------------------------------
@@ -203,7 +202,7 @@ func New(cfg *config.Config, p *player.Player) Model {
 	l := list.New(nil, delegate, 60, 15)
 	l.Title = "Library"
 	l.SetShowStatusBar(false)
-	l.SetFilteringEnabled(true)
+	l.SetFilteringEnabled(false)
 	l.SetShowHelp(false)
 	l.DisableQuitKeybindings()
 	// "k" opens keybinds (see footer) so the list must not steal it:
@@ -740,14 +739,45 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.relayout()
 
 	case libraryMsg:
+		// A rescan (startup or `u`) remaps the playing track by path so
+		// the pill, cursor and footer survive a refresh.
+		curPath := ""
+		if m.cur >= 0 && m.cur < len(m.tracks) {
+			curPath = m.tracks[m.cur].Path
+		}
 		m.tracks = msg.tracks
+		var resel []tea.Cmd
+		if curPath != "" {
+			found := -1
+			for i, t := range m.tracks {
+				if t.Path == curPath {
+					found = i
+					break
+				}
+			}
+			if found >= 0 {
+				m.cur = found
+			} else {
+				// Playing file vanished: stop so the footer never
+				// desyncs from the list.
+				resel = m.markPlaying(m.cur, -1)
+				m.player.Stop()
+				m.playing = false
+				m.cur = -1
+				m.artPath, m.artText = "", ""
+				m.playGen++
+			}
+		}
 		m.setItems()
+		if m.cur >= 0 {
+			m.list.Select(m.cur)
+		}
 		if len(m.tracks) == 0 {
-			m.status = "no music found — press S to choose a folder"
+			m.status = "no music found — press c to choose a folder"
 		} else {
 			m.status = fmt.Sprintf("%d tracks", len(m.tracks))
 		}
-		return m, clearStatusAfter(3 * time.Second)
+		return m, tea.Batch(append(resel, clearStatusAfter(3*time.Second))...)
 
 	case errMsg:
 		m.errText = msg.err.Error()
@@ -802,10 +832,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.list.FilterState() == list.Filtering {
-		var cmd tea.Cmd
-		m.list, cmd = m.list.Update(msg)
-		return m, cmd
+	// Mouse wheel moves the list cursor one track per notch — the
+	// cursor (accent-colored title, played with enter) follows, so the
+	// top visible track can be selected by scrolling to it.
+	if mmsg, ok := msg.(tea.MouseMsg); ok {
+		switch mmsg.Button {
+		case tea.MouseButtonWheelUp:
+			m.list.CursorUp()
+		case tea.MouseButtonWheelDown:
+			m.list.CursorDown()
+		}
+		return m, nil
 	}
 
 	switch msg := msg.(type) {
@@ -815,8 +852,12 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.persist()
 			m.discord.Shutdown()
 			return m, tea.Quit
-		case key.Matches(msg, keys.Help):
+		case key.Matches(msg, keys.Keybinds):
 			m.showHelp = !m.showHelp
+			return m, nil
+		case key.Matches(msg, keys.Back):
+			// Already home: esc only closes the keybinds overlay.
+			m.showHelp = false
 			return m, nil
 		case key.Matches(msg, keys.Download):
 			m.mode = modeDownload
@@ -833,24 +874,15 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setFocus = focusPicker
 			m.blurInputs()
 			return m, m.picker.Init()
-		case key.Matches(msg, keys.Pause):
-			if m.cur >= 0 {
-				m.player.Toggle()
-				m.playing = !m.player.Paused()
+		case key.Matches(msg, keys.PlayPause):
+			if m.cur < 0 {
+				return m, m.playSelected()
 			}
+			m.player.Toggle()
+			m.playing = !m.player.Paused()
 			return m, m.pushPresenceCmd()
 		case key.Matches(msg, keys.Play):
-			if sel, ok := m.list.SelectedItem().(trackItem); ok {
-				for i, t := range m.tracks {
-					if t.Path == sel.t.Path {
-						return m, m.playIndex(i)
-					}
-				}
-			}
-			return m, nil
-		case key.Matches(msg, keys.Stop):
-			stopCmd := m.stopPlayback()
-			return m, tea.Batch(stopCmd, m.pushPresenceCmd())
+			return m, m.playSelected()
 		case key.Matches(msg, keys.Next):
 			j := m.nextIndex(1)
 			if j >= 0 {
@@ -859,10 +891,6 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "end of queue (repeat is off)"
 			return m, clearStatusAfter(2 * time.Second)
 		case key.Matches(msg, keys.Prev):
-			if m.player.Position() > 3*time.Second {
-				m.player.SeekBy(-m.player.Position())
-				return m, m.pushPresenceCmd()
-			}
 			j := m.nextIndex(-1)
 			if j >= 0 {
 				return m, m.playIndex(j)
@@ -896,21 +924,34 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cfg.Volume = m.player.Volume()
 			m.persist()
 			return m, nil
-		case key.Matches(msg, keys.Mute):
-			m.player.ToggleMute()
-			return m, nil
 		case key.Matches(msg, keys.SeekFwd):
 			m.player.SeekBy(5 * time.Second)
 			return m, m.pushPresenceCmd()
 		case key.Matches(msg, keys.SeekBack):
 			m.player.SeekBy(-5 * time.Second)
 			return m, m.pushPresenceCmd()
+		case key.Matches(msg, keys.Refresh):
+			m.status = "refreshing library…"
+			return m, m.loadLibrary(m.cfg.MusicDir)
 		}
 	}
 
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
 	return m, cmd
+}
+
+// playSelected plays the cursor-selected track (the accent-colored
+// title in the list, moved with ↑/↓ or the mouse wheel).
+func (m *Model) playSelected() tea.Cmd {
+	if sel, ok := m.list.SelectedItem().(trackItem); ok {
+		for i, t := range m.tracks {
+			if t.Path == sel.t.Path {
+				return m.playIndex(i)
+			}
+		}
+	}
+	return nil
 }
 
 func (m Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -941,7 +982,7 @@ func (m Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(km, keys.Back):
 			m.mode = modeMain
 			return m, m.pushPresenceCmd()
-		case key.Matches(km, keys.Help):
+		case key.Matches(km, keys.Keybinds):
 			m.showHelp = !m.showHelp
 			return m, nil
 		case key.Matches(km, keys.ApplyDir):
@@ -1114,23 +1155,11 @@ func (m Model) leftRows(w, h, rowsPer int, showAll bool) []string {
 	if w <= 0 || h <= 0 {
 		return rows
 	}
-	// Filter input replaces the first row while typing.
-	if m.list.FilterState() == list.Filtering {
-		q := "/" + m.list.FilterValue() + "▌"
-		rows = append(rows, " "+padCells(truncCells(q, w-1), w-1))
-		for len(rows) < h {
-			rows = append(rows, strings.Repeat(" ", w))
-		}
-		return rows
-	}
 	items := m.list.VisibleItems()
 	sel := m.list.Index()
 	n := len(items)
 	if n == 0 {
-		msg := " no music — press S to choose a folder"
-		if m.list.IsFiltered() {
-			msg = " no matches"
-		}
+		msg := " no music — press c to choose a folder"
 		rows = append(rows, " "+padCells(truncCells(msg[1:], w-1), w-1))
 		for len(rows) < h {
 			rows = append(rows, strings.Repeat(" ", w))
@@ -1420,20 +1449,20 @@ func (m Model) volumeText(w int) string {
 func (m Model) helpFrame(lo layout) []string {
 	W := lo.W
 	body := []string{
-		"enter        play selected",
-		"space        pause / resume",
-		"x            stop",
-		"n / p        next / previous (p restarts if >3s in)",
-		"s            shuffle on/off",
-		"r            repeat off → all → one",
-		"+ / -        volume ±5  (shift: + / _ = ±1 precise)",
-		"m            mute",
-		"← / →        seek ∓5s  (h / l works too)",
-		"/            filter library",
-		"S            settings (music folder)",
-		"y            download from YouTube",
-		"esc          back",
-		"q            quit",
+		"space / p      play / pause",
+		"← / →          previous / next track",
+		"↑ / ↓, wheel   move in the list (enter plays)",
+		"enter          play selected",
+		"+ / -          volume ±5 (shift: ±1 precise)",
+		"a / d          seek -5s / +5s",
+		"s              shuffle on/off",
+		"r              repeat off → all → one",
+		"u              refresh library",
+		"y              download from YouTube",
+		"k              keybinds",
+		"c              settings",
+		"esc            back",
+		"q              quit",
 	}
 	bw := 0
 	for _, l := range body {

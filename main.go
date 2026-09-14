@@ -19,7 +19,7 @@ func main() {
 	p.SetVolume(cfg.Volume)
 
 	model := ui.New(cfg, p)
-	prog := tea.NewProgram(model, tea.WithAltScreen())
+	prog := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := prog.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
