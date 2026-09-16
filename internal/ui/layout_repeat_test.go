@@ -136,3 +136,22 @@ func TestShuffleGlyphPresent(t *testing.T) {
 		}
 	}
 }
+
+// m mutes and unmutes, keeping the volume level (RU ь works too).
+func TestMuteToggles(t *testing.T) {
+	m := testModel(99, 31)
+	vol := m.player.Volume()
+	upd, _ := m.Update(runeKey("m"))
+	m = upd.(Model)
+	if !m.player.Muted() {
+		t.Fatal("m must mute")
+	}
+	upd, _ = m.Update(runeKey("ь"))
+	m = upd.(Model)
+	if m.player.Muted() {
+		t.Fatal("ь (m) must unmute")
+	}
+	if m.player.Volume() != vol {
+		t.Fatalf("volume must restore to %d, got %d", vol, m.player.Volume())
+	}
+}

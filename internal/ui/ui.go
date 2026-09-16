@@ -36,7 +36,6 @@ const (
 
 // Messages
 type tickMsg time.Time
-type discordRefreshMsg struct{}
 type trackEndedMsg struct{ gen int }
 type libraryMsg struct{ tracks []library.Track }
 type errMsg struct{ err error }
@@ -56,6 +55,7 @@ type keyMap struct {
 	Prev      key.Binding
 	VolUp     key.Binding
 	VolDown   key.Binding
+	Mute      key.Binding
 	SeekFwd   key.Binding
 	SeekBack  key.Binding
 	Shuffle   key.Binding
@@ -76,7 +76,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.PlayPause, k.Play, k.Next, k.Prev},
-		{k.Shuffle, k.Repeat, k.VolUp, k.VolDown},
+		{k.Shuffle, k.Repeat, k.VolUp, k.VolDown, k.Mute},
 		{k.SeekFwd, k.SeekBack, k.Refresh, k.Download},
 		{k.Settings, k.Keybinds, k.Back, k.Quit},
 	}
@@ -89,6 +89,7 @@ var keys = keyMap{
 	Prev:      key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "prev")),
 	VolUp:     key.NewBinding(key.WithKeys("+", "="), key.WithHelp("+", "vol+")),
 	VolDown:   key.NewBinding(key.WithKeys("-", "_"), key.WithHelp("-", "vol-")),
+	Mute:      key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mute")),
 	SeekFwd:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "+5s")),
 	SeekBack:  key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "-5s")),
 	Shuffle:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "shuffle")),
@@ -170,8 +171,8 @@ var (
 	fmtStyle     = lipgloss.NewStyle().Foreground(accent2)
 	sectionStyle = lipgloss.NewStyle().Foreground(dimColor).Bold(true)
 	// Active-state pills: an accent background so the state reads at a
-	// glance. pillBold adds bold (playing track, shuffle ON, repeat
-	// ONE); pillSoft stays regular weight (repeat ALL).
+	// glance. pillBold adds bold (playing track, shuffle ON, any
+	// repeat); pillSoft stays regular weight (playing subtitle).
 	pillFg   = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#14101F"}
 	pillBold = lipgloss.NewStyle().Bold(true).Foreground(pillFg).Background(accent)
 	pillSoft = lipgloss.NewStyle().Foreground(pillFg).Background(accent)
@@ -304,10 +305,6 @@ func (m Model) Init() tea.Cmd {
 
 func tick() tea.Cmd {
 	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
-}
-
-func discordRefreshAfter(d time.Duration) tea.Cmd {
-	return tea.Tick(d, func(time.Time) tea.Msg { return discordRefreshMsg{} })
 }
 
 func (m Model) loadLibrary(dir string) tea.Cmd {
@@ -984,21 +981,6 @@ func formatLine(ext string, rateHz, ch int) string {
 	return fmt.Sprintf("%s · %s · %s", ext, khz, chName)
 }
 
-// trunc shortens s to n runes with an ellipsis.
-func trunc(s string, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	if n == 1 {
-		return "…"
-	}
-	return string(r[:n-1]) + "…"
-}
-
 func clamp(v, lo, hi int) int {
 	if v < lo {
 		return lo
@@ -1007,20 +989,6 @@ func clamp(v, lo, hi int) int {
 		return hi
 	}
 	return v
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func onOff(b bool) string {
@@ -1125,9 +1093,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(tick(), m.pushPresenceCmd())
 		}
 		return m, tick()
-
-	case discordRefreshMsg:
-		return m, nil
 
 	case trackEndedMsg:
 		if m.playing && m.mode == modeMain {
@@ -1302,6 +1267,9 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cfg.Volume = m.player.Volume()
 			m.persist()
 			return m, nil
+		case key.Matches(msg, keys.Mute):
+			m.player.ToggleMute() // volume level kept, restores on unmute
+			return m, nil
 		case key.Matches(msg, keys.SeekFwd):
 			m.player.SeekBy(5 * time.Second)
 			return m, m.pushPresenceCmd()
@@ -1465,7 +1433,7 @@ func (m *Model) activateSetting(browse bool) tea.Cmd {
 		m.persist()
 		m.moveSetCursor(0) // rows may have shrunk (button hides)
 		m.status = "discord: " + onOff(m.cfg.Discord.Enabled)
-		return tea.Batch(m.syncDiscordCmd(), clearStatusAfter(2*time.Second), discordRefreshAfter(2*time.Second))
+		return tea.Batch(m.syncDiscordCmd(), clearStatusAfter(2*time.Second))
 	case rowShowButton:
 		m.cfg.Discord.ShowButton = !m.cfg.Discord.ShowButton
 		m.persist()
@@ -2045,8 +2013,10 @@ func (m Model) controlsText(w int) string {
 	if m.cfg.Shuffle {
 		sh = pillBold.Render("⮂") // on: highlighted + bold
 	}
+	// Icon follows the transport, not m.playing (Toggle flips playing
+	// to false while paused — gating on it would draw ■ on pause).
 	play := "■"
-	if m.cur >= 0 && m.playing {
+	if m.cur >= 0 {
 		if m.player.Paused() {
 			play = "▶"
 		} else {
@@ -2056,7 +2026,7 @@ func (m Model) controlsText(w int) string {
 	pos, length := m.player.Position(), m.player.Length()
 	pct := 0.0
 	if length > 0 {
-		pct = clampFloat(float64(pos)/float64(length), 0, 1)
+		pct = min(max(float64(pos)/float64(length), 0), 1)
 	}
 	el, tot := fmtDur(pos), fmtDur(length)
 	prefix := rep + " " + sh + "   " + play + "   " + el + " "
@@ -2070,7 +2040,7 @@ func (m Model) controlsText(w int) string {
 func (m Model) controlsTextPlain() string {
 	pos, length := m.player.Position(), m.player.Length()
 	play := "■"
-	if m.cur >= 0 && m.playing {
+	if m.cur >= 0 {
 		if m.player.Paused() {
 			play = "▶"
 		} else {
@@ -2095,7 +2065,7 @@ func (m Model) volumeText(w int) string {
 	} else if m.status != "" {
 		left = "* " + m.status
 	} else if m.player.Muted() {
-		left = fmt.Sprintf("Volume: muted (+/- to unmute, Shift for precise)")
+		left = "Volume: muted (m to unmute)"
 	} else {
 		left = fmt.Sprintf("Volume: %d%% (+/- to change, Shift for precise)", m.player.Volume())
 	}
@@ -2119,6 +2089,7 @@ var helpLines = []string{
 	"↑ / ↓, wheel   move in the list (enter plays)",
 	"enter          play selected",
 	"+ / -          volume ±5 (shift: ±1 precise)",
+	"m              mute on/off",
 	"a / d          seek -5s / +5s",
 	"s              shuffle on/off",
 	"r              repeat off → all → one",
@@ -2273,16 +2244,6 @@ func fitCells(art string, w, h int) []string {
 // viewControls renders the full-width bottom bar: progress + time,
 // then state, volume, toggles and queue position.
 // viewControls is superseded by controlsText (kept for compatibility).
-
-func clampFloat(v, lo, hi float64) float64 {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
-}
 
 // subHeader is the shared frame header for the settings/download
 // tabs: same brand, same 1-cell indent as the main player view.
@@ -2449,9 +2410,9 @@ func (m Model) updateDownload(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.count > 1 {
-			m.dlStatus = fmt.Sprintf("found %d tracks (%s…) — downloading…", msg.count, trunc(msg.title, 40))
+			m.dlStatus = fmt.Sprintf("found %d tracks (%s…) — downloading…", msg.count, truncCells(msg.title, 40))
 		} else {
-			m.dlStatus = fmt.Sprintf("found %s — downloading…", trunc(msg.title, 60))
+			m.dlStatus = fmt.Sprintf("found %s — downloading…", truncCells(msg.title, 60))
 		}
 		return m, m.dlFetchCmd(msg.gen, msg.link, msg.count)
 	case dlDoneMsg:

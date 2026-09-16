@@ -213,7 +213,7 @@ func (p *Progress) observe(line string) {
 			}
 			if v, err := strconv.ParseFloat(body[j+1:i], 64); err == nil {
 				p.mu.Lock()
-				p.Percent = clamp01(v / 100) * 100
+				p.Percent = clamp01(v/100) * 100
 				p.mu.Unlock()
 			}
 			return
@@ -227,13 +227,6 @@ func (p *Progress) observe(line string) {
 	}
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func scanLines(r io.Reader, fn func(string)) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -242,16 +235,12 @@ func scanLines(r io.Reader, fn func(string)) {
 	}
 }
 
-// Download fetches best audio as mp3 into dir and returns final file paths.
+// DownloadWithProgress fetches best audio as mp3 into dir and returns
+// final file paths, plus a live snapshot: every yt-dlp output line is
+// folded into prog (may be nil) while the transfer runs.
 // --add-metadata writes title/artist tags (uploader as artist fallback)
 // and --embed-thumbnail stores the cover art, so library, player card
 // and Discord presence pick them up with no extra work.
-func Download(ctx context.Context, ytBin, link, dir string) ([]string, error) {
-	return DownloadWithProgress(ctx, ytBin, link, dir, nil)
-}
-
-// DownloadWithProgress is Download plus a live snapshot: every yt-dlp
-// output line is folded into prog (may be nil) while the transfer runs.
 //
 // Playlists/albums download whole (--yes-playlist makes that explicit
 // even for watch-URLs carrying a list param); the -o template carries

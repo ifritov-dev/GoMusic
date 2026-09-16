@@ -88,7 +88,7 @@ func TestCheck(t *testing.T) {
 func TestDownload(t *testing.T) {
 	fakeYTDLP(t)
 	music := t.TempDir()
-	files, err := Download(context.Background(), "yt-dlp", "https://youtu.be/x", music)
+	files, err := DownloadWithProgress(context.Background(), "yt-dlp", "https://youtu.be/x", music, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

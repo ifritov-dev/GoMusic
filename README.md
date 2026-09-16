@@ -92,6 +92,7 @@ on Linux): music folder, volume, shuffle, repeat — all persisted.
 | `↑` / `↓` or mouse wheel | move in the list (`enter` plays the highlighted track) |
 | `enter` | play selected |
 | `+` / `-` | volume ±5 (`shift` = ±1 precise) |
+| `m` | mute on/off (volume restores) |
 | `a` / `d` | seek -5 s / +5 s |
 | `s` | shuffle on/off |
 | `r` | repeat off → all → one |
