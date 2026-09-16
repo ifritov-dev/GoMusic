@@ -162,15 +162,16 @@ type Model struct {
 	height   int
 	cur      int // index into tracks, -1 = none
 	playing  bool
-	playGen  int // increments on every play/stop; drops stale trackEndedMsg
+	playGen  int  // increments on every play/stop; drops stale trackEndedMsg
+	restored bool // previous session resumed once (first library load)
 	// Shuffle state: a permutation of track indexes played in order.
 	// Guarantees no repeats within a cycle — a track repeats only
 	// after every other track has played (then a new cycle starts).
 	shuffleOrder []int // permutation of [0,len(tracks)), valid when Shuffle on
 	shufflePos   int   // position in shuffleOrder of cur; -1 = before start/none
-	showHelp bool
-	status   string
-	errText  string
+	showHelp     bool
+	status       string
+	errText      string
 	// Cover art cache (rendered cells for the current box size).
 	artPath string
 	artText string
@@ -184,15 +185,15 @@ type Model struct {
 	// changes it. The folder row edits the path inline (paste a
 	// path) or opens a directories-only browser (songs are never
 	// listed); the GitHub button row only shows with Discord on.
-	setCursor     int
-	browsing      bool // folder browser owns the keyboard
-	editingPath   bool // folder path input owns the keyboard
-	dirPath       string   // browser location (absolute, cleaned)
-	dirNames      []string // sorted subdirs, ".." first when escapable
-	dirCursor     int
-	dirOffset     int
-	dirErr        string
-	pathInput     textinput.Model
+	setCursor   int
+	browsing    bool     // folder browser owns the keyboard
+	editingPath bool     // folder path input owns the keyboard
+	dirPath     string   // browser location (absolute, cleaned)
+	dirNames    []string // sorted subdirs, ".." first when escapable
+	dirCursor   int
+	dirOffset   int
+	dirErr      string
+	pathInput   textinput.Model
 	// YouTube download tab.
 	urlInput textinput.Model
 	dlStatus string
@@ -221,6 +222,11 @@ func New(cfg *config.Config, p *player.Player) Model {
 	l.SetFilteringEnabled(false)
 	l.SetShowHelp(false)
 	l.DisableQuitKeybindings()
+	// Built-in fuzzy filter over title/artist/album (see FilterValue),
+	// opened with "f". The list's own view is never rendered — only
+	// VisibleItems/SelectedItem feed the custom frame.
+	l.SetFilteringEnabled(true)
+	l.KeyMap.Filter.SetKeys("f")
 	// "k" opens keybinds (see footer) so the list must not steal it:
 	// cursor moves on ↑/↓ only.
 	l.KeyMap.CursorUp.SetKeys("up")
@@ -541,6 +547,7 @@ func (m *Model) playIndex(i int) tea.Cmd {
 		cmds = append(cmds, loadArtCmd(m.tracks[i].Path, lo.artW, lo.artH))
 	}
 	cmds = append(cmds, m.waitTrackEnd(gen), m.pushPresenceCmd())
+	m.saveState()
 	return tea.Batch(cmds...)
 }
 
@@ -602,9 +609,9 @@ func (m *Model) resetShuffle(first int) {
 	if first >= 0 && first < n {
 		for k, v := range order {
 			if v == first {
-			order[0], order[k] = order[k], order[0]
-			break
-		}
+				order[0], order[k] = order[k], order[0]
+				break
+			}
 		}
 		m.shufflePos = 0
 	}
@@ -710,13 +717,13 @@ func (m *Model) remapShuffleAfterRescan(oldPaths []string) {
 		seen := make(map[string]bool, len(oldPaths))
 		for _, p := range oldPaths {
 			if seen[p] {
-			continue
+				continue
+			}
+			seen[p] = true
+			if k, ok := newIdx[p]; ok {
+				order = append(order, k)
+			}
 		}
-		seen[p] = true
-		if k, ok := newIdx[p]; ok {
-			order = append(order, k)
-		}
-	}
 	}
 	// New files: shuffle and append after the surviving prefix.
 	inOrder := make([]bool, len(m.tracks))
@@ -764,12 +771,12 @@ func (m *Model) nextIndex(step int) int {
 			// only now — with a brand-new shuffled order.
 			if m.cfg.Repeat == config.RepeatAll {
 				cur := m.cur
-			m.resetShuffle(-1)
-			// Don't play the same track twice in a row across
+				m.resetShuffle(-1)
+				// Don't play the same track twice in a row across
 				// the cycle boundary.
 				if cur >= 0 && len(m.shuffleOrder) > 1 && m.shuffleOrder[0] == cur {
 					j := 1 + rand.Intn(len(m.shuffleOrder)-1)
-				m.shuffleOrder[0], m.shuffleOrder[j] = m.shuffleOrder[j], m.shuffleOrder[0]
+					m.shuffleOrder[0], m.shuffleOrder[j] = m.shuffleOrder[j], m.shuffleOrder[0]
 				}
 				return m.shuffleOrder[0]
 			}
@@ -837,6 +844,57 @@ func (m *Model) setItems() {
 }
 
 func (m *Model) persist() { _ = m.cfg.Save() }
+
+// saveState snapshots the session (track + position; volume/shuffle/
+// repeat already live in cfg) and persists it. Called on quit, on
+// track change and periodically while playing, so even a kill loses
+// at most ~30s of position.
+func (m *Model) saveState() {
+	if m.player != nil {
+		m.cfg.LastTrack = m.player.Current()
+		m.cfg.LastPosSec = 0
+		if m.cfg.LastTrack != "" {
+			m.cfg.LastPosSec = m.player.Position().Seconds()
+		}
+	}
+	m.persist()
+}
+
+// maybeRestore resumes the previous session once: the saved track is
+// loaded, seeked to the saved position and left paused. It runs only
+// on the first library load after startup (never on `u` refresh) and
+// only when nothing is already playing.
+func (m *Model) maybeRestore() tea.Cmd {
+	if m.cur >= 0 || m.cfg.LastTrack == "" || len(m.tracks) == 0 {
+		return nil
+	}
+	idx := -1
+	for i, t := range m.tracks {
+		if t.Path == m.cfg.LastTrack {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return nil
+	}
+	// Capture before playIndex: it snapshots state (saving the new
+	// track at ~0) which would clobber the saved position below.
+	savedPos := time.Duration(m.cfg.LastPosSec * float64(time.Second))
+	cmd := m.playIndex(idx)
+	if m.cur != idx {
+		return cmd // play failed (see errText): stay stopped
+	}
+	if length := m.player.Length(); length > 0 {
+		pos := savedPos
+		if pos < 0 || pos >= length-2*time.Second {
+			pos = 0 // fresh start instead of an instant track-end skip
+		}
+		m.player.SeekTo(pos)
+	}
+	m.player.SetPaused(true)
+	return tea.Batch(cmd, m.pushPresenceCmd())
+}
 
 // presenceInfo snapshots playback for the Discord manager.
 func (m Model) presenceInfo() discord.TrackInfo {
@@ -1006,6 +1064,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.remapShuffleAfterRescan(oldShufflePaths)
 		m.setItems()
+		if !m.restored {
+			m.restored = true
+			if cmd := m.maybeRestore(); cmd != nil {
+				resel = append(resel, cmd)
+			}
+		}
 		if m.cur >= 0 {
 			m.list.Select(m.cur)
 		}
@@ -1027,6 +1091,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.ticks++
 		if m.ticks%60 == 0 {
+			if m.playing {
+				m.saveState() // crash-safe position, ~30s stale at most
+			}
 			// Re-detect Discord started after us; refresh timestamps.
 			return m, tea.Batch(tick(), m.pushPresenceCmd())
 		}
@@ -1085,6 +1152,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// While typing a search query every key belongs to the filter
+	// input — including the app's own bindings (s, a, d, q, …).
+	if m.list.FilterState() == list.Filtering {
+		var cmd tea.Cmd
+		m.list, cmd = m.list.Update(msg)
+		return m, cmd
+	}
 	// Mouse wheel moves the list cursor one track per notch — the
 	// cursor (accent-colored title, played with enter) follows, so the
 	// top visible track can be selected by scrolling to it.
@@ -1102,13 +1176,19 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, keys.Quit):
-			m.persist()
+			m.saveState()
 			m.discord.Shutdown()
 			return m, tea.Quit
 		case key.Matches(msg, keys.Keybinds):
 			m.showHelp = !m.showHelp
 			return m, nil
 		case key.Matches(msg, keys.Back):
+			// An applied filter clears first — esc is also the
+			// list's ClearFilter, but our binding runs first.
+			if m.list.FilterState() != list.Unfiltered {
+				m.list.ResetFilter()
+				return m, nil
+			}
 			// Already home: esc only closes the keybinds overlay.
 			m.showHelp = false
 			return m, nil
@@ -1223,7 +1303,7 @@ func (m *Model) playSelected() tea.Cmd {
 func (m Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if km, ok := msg.(tea.KeyMsg); ok {
 		if key.Matches(km, keys.Quit) {
-			m.persist()
+			m.saveState()
 			m.discord.Shutdown()
 			return m, tea.Quit
 		}
@@ -1418,7 +1498,7 @@ func loadDirCmd(path string) tea.Cmd {
 		} else {
 			// Filesystem root: on Windows that is one drive
 			// (C:\) with siblings (D:\) unreachable by "..",
-		// so list every live drive for switching between them.
+			// so list every live drive for switching between them.
 			names = append(names, rootVolumes(path)...)
 		}
 		return dirMsg{path: path, names: append(names, subs...)}
@@ -1668,14 +1748,23 @@ func (m Model) viewMain() string {
 func (m Model) headerText() string {
 	inner := max(m.width-2, 0)
 	lib := fmt.Sprintf("Library: %d tracks", len(m.tracks))
-	full := "GoMusic   " + lib + "   " + m.cfg.MusicDir
+	extra := ""
+	switch m.list.FilterState() {
+	case list.Filtering:
+		extra = "   search: " + m.list.FilterValue()
+	case list.FilterApplied:
+		extra = fmt.Sprintf("   filter: %s (%d/%d, esc clears)",
+			m.list.FilterValue(), len(m.list.VisibleItems()), len(m.tracks))
+	}
+	extra = truncCells(extra, max(inner/2, 0)) // the tag never eats the header
+	full := "GoMusic   " + lib + "   " + m.cfg.MusicDir + extra
 	if cellWidth(full) <= inner {
-		return brandStyle.Render("GoMusic") + "   " + lib + "   " + dimStyle.Render(m.cfg.MusicDir)
+		return brandStyle.Render("GoMusic") + "   " + lib + "   " + dimStyle.Render(m.cfg.MusicDir) + dimStyle.Render(extra)
 	}
 	// Shrink the directory first, never the brand/counts.
 	keep := "GoMusic   " + lib + "   "
-	room := max(inner-cellWidth(keep), 0)
-	return brandStyle.Render("GoMusic") + "   " + lib + "   " + dimStyle.Render(truncCells(m.cfg.MusicDir, room))
+	room := max(inner-cellWidth(keep)-cellWidth(extra), 0)
+	return brandStyle.Render("GoMusic") + "   " + lib + "   " + dimStyle.Render(truncCells(m.cfg.MusicDir, room)) + dimStyle.Render(extra)
 }
 
 // leftRows renders the track list with a 1-cell leading indent. The
@@ -1691,6 +1780,9 @@ func (m Model) leftRows(w, h, rowsPer int, showAll bool) []string {
 	n := len(items)
 	if n == 0 {
 		msg := " no music — press c to choose a folder"
+		if m.list.FilterState() != list.Unfiltered {
+			msg = " no matches — esc to clear the search"
+		}
 		rows = append(rows, " "+padCells(truncCells(msg[1:], w-1), w-1))
 		for len(rows) < h {
 			rows = append(rows, strings.Repeat(" ", w))
@@ -1989,6 +2081,7 @@ var helpLines = []string{
 	"s              shuffle on/off",
 	"r              repeat off → all → one",
 	"u              refresh library",
+	"f              search (title / artist / album)",
 	"y              download from YouTube",
 	"k              keybinds",
 	"c              settings",

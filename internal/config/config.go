@@ -33,6 +33,9 @@ type Config struct {
 	Shuffle  bool          `json:"shuffle"`
 	Repeat   RepeatMode    `json:"repeat"`
 	Discord  DiscordConfig `json:"discord"`
+	// Last session: restored on start (track paused at position).
+	LastTrack  string  `json:"last_track,omitempty"`
+	LastPosSec float64 `json:"last_pos_sec,omitempty"` // seconds into LastTrack
 }
 
 func Default() *Config {
@@ -81,6 +84,9 @@ func Load() *Config {
 	}
 	if loaded.MusicDir == "" {
 		loaded.MusicDir = cfg.MusicDir
+	}
+	if loaded.LastPosSec < 0 {
+		loaded.LastPosSec = 0
 	}
 	if loaded.Discord.Details == "" {
 		loaded.Discord.Details = "Using GoMusic"

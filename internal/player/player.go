@@ -344,12 +344,30 @@ func (p *Player) SeekBy(d time.Duration) time.Duration {
 	samples := int(float64(d) / float64(time.Second) * float64(OutRate))
 	audio.Lock()
 	pos := s.Position() + samples
+	audio.Unlock()
+	return p.seekToSamples(pos)
+}
+
+// SeekTo jumps to absolute position d (clamped). Returns new position.
+func (p *Player) SeekTo(d time.Duration) time.Duration {
+	return p.seekToSamples(int(float64(d) / float64(time.Second) * float64(OutRate)))
+}
+
+func (p *Player) seekToSamples(pos int) time.Duration {
+	p.mu.Lock()
+	s := p.streamer
+	n := p.lenOut
+	p.mu.Unlock()
+	if s == nil {
+		return 0
+	}
 	if pos < 0 {
 		pos = 0
 	}
-	if p.lenOut > 0 && pos >= p.lenOut {
-		pos = p.lenOut - 1
+	if n > 0 && pos >= n {
+		pos = n - 1
 	}
+	audio.Lock()
 	_ = s.Seek(pos)
 	audio.Unlock()
 	return time.Duration(float64(pos) / float64(OutRate) * float64(time.Second))

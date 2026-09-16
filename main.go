@@ -8,10 +8,16 @@ import (
 
 	"github.com/ifritov-dev/GoMusic/internal/config"
 	"github.com/ifritov-dev/GoMusic/internal/player"
+	"github.com/ifritov-dev/GoMusic/internal/selfpath"
 	"github.com/ifritov-dev/GoMusic/internal/ui"
 )
 
 func main() {
+	// First run installs the `gomusic` command on PATH (per-OS
+	// conventions); prints a hint only when manual action is needed.
+	if hint := selfpath.Ensure(); hint != "" {
+		fmt.Fprintln(os.Stderr, hint)
+	}
 	cfg := config.Load()
 	p := player.New(cfg.Volume)
 	p.Init()

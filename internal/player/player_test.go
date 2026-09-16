@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gopxl/beep/v2"
 	"github.com/gopxl/beep/v2/wav"
@@ -173,5 +174,37 @@ func TestPlayerSilentModeQueue(t *testing.T) {
 	p.Stop()
 	if p.Current() != "" || p.Length() != 0 {
 		t.Fatal("stop should clear state")
+	}
+}
+
+func TestSeekToAbsolute(t *testing.T) {
+	p := New(80)
+	p.Init()
+	defer p.Close()
+	dir := t.TempDir()
+	f := filepath.Join(dir, "s.wav")
+	writeWav(t, f, 48000, 2.0)
+	if err := p.PlayFile(f); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.SeekTo(1500 * time.Millisecond); got < 1400*time.Millisecond || got > 1600*time.Millisecond {
+		t.Fatalf("seek to 1.5s = %v", got)
+	}
+	if pos := p.Position(); pos < 1400*time.Millisecond || pos > 1600*time.Millisecond {
+		t.Fatalf("position after seek = %v", pos)
+	}
+	// Negative clamps to 0, past-the-end clamps to length.
+	if got := p.SeekTo(-5 * time.Second); got != 0 {
+		t.Fatalf("negative seek = %v, want 0", got)
+	}
+	if length := p.Length(); length <= 0 {
+		t.Fatal("length should be > 0")
+	} else if got := p.SeekTo(length + 5*time.Second); got < 0 || got >= length {
+		t.Fatalf("past-end seek = %v, length %v", got, length)
+	}
+	// SeekBy still works (relative on top of absolute).
+	p.SeekTo(0)
+	if got := p.SeekBy(500 * time.Millisecond); got < 400*time.Millisecond || got > 600*time.Millisecond {
+		t.Fatalf("seek +0.5s = %v", got)
 	}
 }

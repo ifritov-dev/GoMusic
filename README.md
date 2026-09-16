@@ -35,11 +35,20 @@ go build -o gomusic .
 ./gomusic
 ```
 
+The first run installs the `gomusic` command for the terminal
+(Linux/macOS: a `~/.local/bin/gomusic` symlink, Windows:
+`%LOCALAPPDATA%\gomusic` + user PATH with a live
+WM_SETTINGCHANGE broadcast, so even already-open consoles pick it
+up) — reopen the terminal afterwards if it was just installed. If `~/.local/bin` is not on
+your PATH, the app prints the one `export` line to add.
+
 On each OS just run the same `go build` natively (cgo requires a C
 compiler: `gcc` on Linux, Xcode CLT on macOS, MinGW-w64 on Windows).
 No system audio dev packages, no external binaries.
 
 Config lives in the OS config dir (`~/.config/gomusic/config.json`
+on Linux): music folder, volume, shuffle, repeat — plus the last
+session (track + position), which resumes paused on the next start.
 
 ## Discord Rich Presence (optional)
 
@@ -66,7 +75,7 @@ waits on Discord.
 
 Setup (once): Discord requires every presence to belong to an
 Application — create one at
-https://discord.com/developers/applications → Rich Presence → Art
+<https://discord.com/developers/applications> → Rich Presence → Art
 Assets → upload `assets/GoMusic-bg.png` as `logo`, then paste the
 Application ID into Settings (a future update bakes the official ID
 in as the default so this step disappears). Note: Discord only renders images
@@ -77,7 +86,7 @@ on Linux): music folder, volume, shuffle, repeat — all persisted.
 ## Keys
 
 | Key | Action |
-|---|---|
+| --- | --- |
 | `space` / `p` | play / pause |
 | `←` / `→` | previous / next track |
 | `↑` / `↓` or mouse wheel | move in the list (`enter` plays the highlighted track) |
@@ -87,6 +96,7 @@ on Linux): music folder, volume, shuffle, repeat — all persisted.
 | `s` | shuffle on/off |
 | `r` | repeat off → all → one |
 | `u` | refresh library |
+| `f` | search by title / artist / album (`esc` clears) |
 | `k` or `?` | keybinds on/off |
 | `c` | settings (music folder) |
 | `y` | download from YouTube / YouTube Music |
@@ -107,7 +117,7 @@ rescans the library. Title/artist tags and cover art are embedded
 artist), so the player, song card and Discord show them right away.
 Playlists and albums download whole with a live track position + progress bar; single videos as one track. `esc` backs out (and cancels a running
 download). Needs `yt-dlp` and `ffmpeg` installed —
-install yt-dlp: https://github.com/yt-dlp/yt-dlp#installation
+install yt-dlp: <https://github.com/yt-dlp/yt-dlp#installation>
 
 ## Layout
 
