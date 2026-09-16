@@ -102,6 +102,34 @@ var keys = keyMap{
 	Quit:      key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 }
 
+// ruLayout maps Cyrillic letters to the Latin letter on the same
+// physical key (Russian ЙЦУКЕН plus Ukrainian extras), so hotkeys
+// work in any keyboard layout. Case is preserved: shifted letters
+// stay shifted and keep not matching, exactly like in EN.
+var ruLayout = map[rune]rune{
+	'ё': '`', 'Ё': '~',
+	'й': 'q', 'ц': 'w', 'у': 'e', 'к': 'r', 'е': 't', 'н': 'y', 'г': 'u', 'ш': 'i', 'щ': 'o', 'з': 'p', 'х': '[', 'ъ': ']',
+	'Й': 'Q', 'Ц': 'W', 'У': 'E', 'К': 'R', 'Е': 'T', 'Н': 'Y', 'Г': 'U', 'Ш': 'I', 'Щ': 'O', 'З': 'P', 'Х': '{', 'Ъ': '}',
+	'ф': 'a', 'ы': 's', 'в': 'd', 'а': 'f', 'п': 'g', 'р': 'h', 'о': 'j', 'л': 'k', 'д': 'l', 'ж': ';', 'э': '\'',
+	'Ф': 'A', 'Ы': 'S', 'В': 'D', 'А': 'F', 'П': 'G', 'Р': 'H', 'О': 'J', 'Л': 'K', 'Д': 'L', 'Ж': ':', 'Э': '"',
+	'я': 'z', 'ч': 'x', 'с': 'c', 'м': 'v', 'и': 'b', 'т': 'n', 'ь': 'm', 'б': ',', 'ю': '.',
+	'Я': 'Z', 'Ч': 'X', 'С': 'C', 'М': 'V', 'И': 'B', 'Т': 'N', 'Ь': 'M', 'Б': '<', 'Ю': '>',
+	// Ukrainian letters sit on the same physical keys.
+	'і': 's', 'І': 'S', 'ї': ']', 'Ї': '}', 'є': '\'', 'Є': '"', 'ґ': '\\', 'Ґ': '|',
+}
+
+// normLayout rewrites a single-rune Cyrillic keypress to the Latin
+// letter on the same physical key. Only hotkey paths use it — text
+// inputs (search filter, folder path, URL) always get raw runes.
+func normLayout(msg tea.KeyMsg) tea.KeyMsg {
+	if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 {
+		if en, ok := ruLayout[msg.Runes[0]]; ok {
+			msg.Runes = []rune{en}
+		}
+	}
+	return msg
+}
+
 // List item -------------------------------------------------------
 
 type trackItem struct {
@@ -140,7 +168,6 @@ var (
 	badgeOff     = lipgloss.NewStyle().Foreground(dimColor).Padding(0, 1)
 	errStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444")).Bold(true)
 	fmtStyle     = lipgloss.NewStyle().Foreground(accent2)
-	queueStyle   = lipgloss.NewStyle().Foreground(dimColor).Bold(true)
 	sectionStyle = lipgloss.NewStyle().Foreground(dimColor).Bold(true)
 	// Active-state pills: an accent background so the state reads at a
 	// glance. pillBold adds bold (playing track, shuffle ON, repeat
@@ -1159,6 +1186,11 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list, cmd = m.list.Update(msg)
 		return m, cmd
 	}
+	// Hotkeys work in any keyboard layout (see normLayout). After the
+	// filter bypass above, so typed search text keeps its runes.
+	if km, ok := msg.(tea.KeyMsg); ok {
+		msg = normLayout(km)
+	}
 	// Mouse wheel moves the list cursor one track per notch — the
 	// cursor (accent-colored title, played with enter) follows, so the
 	// top visible track can be selected by scrolling to it.
@@ -1301,6 +1333,10 @@ func (m *Model) playSelected() tea.Cmd {
 }
 
 func (m Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
+	raw := msg // text inputs (folder path) get raw runes, never normalized
+	if km, ok := msg.(tea.KeyMsg); ok {
+		msg = normLayout(km)
+	}
 	if km, ok := msg.(tea.KeyMsg); ok {
 		if key.Matches(km, keys.Quit) {
 			m.saveState()
@@ -1318,7 +1354,7 @@ func (m Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if km.Type == tea.KeyEnter {
 				return m, m.applyPastedPath()
 			}
-			return m.updatePathInput(msg)
+			return m.updatePathInput(raw)
 		}
 		// The folder browser owns the keyboard while open.
 		if m.browsing {
@@ -1385,7 +1421,7 @@ func (m Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.editingPath {
-		return m.updatePathInput(msg)
+		return m.updatePathInput(raw)
 	}
 	return m, nil
 }
@@ -1991,21 +2027,23 @@ func (m Model) cardText() (title, artist, album, format string) {
 	return title, artist, album, format
 }
 
-// controlsText is "⟳ ⇄   ⏸   0:18 ───…─── 3:27", bar fills the row.
+// controlsText is "⟳ ⮂   ⏸   0:18 ───…─── 3:27", bar fills the row.
 func (m Model) controlsText(w int) string {
 	if w <= 10 {
 		return truncCells(m.controlsTextPlain(), w)
 	}
-	rep := dimStyle.Render("⟳")
-	switch m.cfg.Repeat {
-	case config.RepeatOne:
-		rep = pillBold.Render("⟳") // one song: highlighted + bold
-	case config.RepeatAll:
-		rep = pillSoft.Render("⟳") // all: highlighted, regular weight
+	// Any active repeat reads bold; repeat-one adds a ₁ counter.
+	repGlyph := "⟳"
+	if m.cfg.Repeat == config.RepeatOne {
+		repGlyph = "⟳₁"
 	}
-	sh := dimStyle.Render("⇄")
+	rep := dimStyle.Render(repGlyph)
+	if m.cfg.Repeat != config.RepeatOff {
+		rep = pillBold.Render(repGlyph)
+	}
+	sh := dimStyle.Render("⮂")
 	if m.cfg.Shuffle {
-		sh = pillBold.Render("⇄") // on: highlighted + bold
+		sh = pillBold.Render("⮂") // on: highlighted + bold
 	}
 	play := "■"
 	if m.cur >= 0 && m.playing {
@@ -2039,7 +2077,11 @@ func (m Model) controlsTextPlain() string {
 			play = "⏸"
 		}
 	}
-	return "⟳ ⇄   " + play + "   " + fmtDur(pos) + " " + fmtDur(length)
+	repGlyph := "⟳"
+	if m.cfg.Repeat == config.RepeatOne {
+		repGlyph = "⟳₁"
+	}
+	return repGlyph + " ⮂   " + play + "   " + fmtDur(pos) + " " + fmtDur(length)
 }
 
 // volumeText is "Volume: 100% (+/- to change, Shift for precise)"
@@ -2087,6 +2129,7 @@ var helpLines = []string{
 	"c              settings",
 	"esc            back",
 	"q              quit",
+	"*              hotkeys work in any layout",
 }
 
 func (m Model) helpFrame(lo layout) []string {

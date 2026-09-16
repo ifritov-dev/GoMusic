@@ -87,7 +87,7 @@ func TestExactFrame99x31(t *testing.T) {
 	}
 	// H=31 → midH=26: spacer 27, controls 28, spacer 29, volume 30.
 	ctrl := lines[28]
-	if !strings.Contains(ctrl, "⟳") || !strings.Contains(ctrl, "⇄") {
+	if !strings.Contains(ctrl, "⟳") || !strings.Contains(ctrl, "⮂") {
 		t.Fatalf("controls icons missing: %q", ctrl)
 	}
 	if strings.Count(ctrl, "0:00") < 2 {
@@ -232,7 +232,7 @@ func TestFooterPills(t *testing.T) {
 	m.cfg.Shuffle = true
 	m.cfg.Repeat = config.RepeatOne
 	line := m.controlsText(w)
-	sh := iconSGR(t, line, "⇄")
+	sh := iconSGR(t, line, "⮂")
 	rep := iconSGR(t, line, "⟳")
 	for name, sgr := range map[string]string{"shuffle": sh, "repeat-one": rep} {
 		if !strings.Contains(sgr, "48;") {
@@ -242,15 +242,21 @@ func TestFooterPills(t *testing.T) {
 			t.Fatalf("%s icon lacks bold: %q", name, sgr)
 		}
 	}
-	// Repeat ALL: highlighted, regular weight.
+	if !strings.Contains(line, "⟳₁") {
+		t.Fatalf("repeat-one must show the ₁ counter: %q", line)
+	}
+	// Repeat ALL: highlighted + bold (any active repeat reads bold).
 	m.cfg.Repeat = config.RepeatAll
 	line = m.controlsText(w)
 	rep = iconSGR(t, line, "⟳")
 	if !strings.Contains(rep, "48;") {
 		t.Fatalf("repeat-all icon lacks background pill: %q", rep)
 	}
-	if strings.HasPrefix(rep, "\x1b[1;") {
-		t.Fatalf("repeat-all icon must not be bold: %q", rep)
+	if !strings.HasPrefix(rep, "\x1b[1;") {
+		t.Fatalf("repeat-all icon lacks bold: %q", rep)
+	}
+	if strings.Contains(stripANSI(line), "₁") {
+		t.Fatalf("repeat-all must not show the one-counter: %q", line)
 	}
 	// Everything OFF: no pills at all.
 	m.cfg.Shuffle = false

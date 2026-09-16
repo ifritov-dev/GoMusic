@@ -103,6 +103,9 @@ on Linux): music folder, volume, shuffle, repeat — all persisted.
 | `esc` | back (closes keybinds / current page) |
 | `q` | quit |
 
+Hotkeys are layout-independent: Russian ЙЦУКЕН (plus Ukrainian
+і/ї/є/ґ) works the same as EN, since keys match by physical position.
+
 Settings is one menu: pick a row with `↑/↓` or the mouse wheel,
 change it with `enter` (toggles flip at once). The folder row takes
 a pasted/typed path (`~` and quotes work on every OS); `l` opens a
