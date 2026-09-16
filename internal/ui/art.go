@@ -15,8 +15,10 @@ import (
 // shimmering.
 
 // renderCover scales img to cellW×cellH terminal cells and returns the
-// rendered string (cellH lines, no trailing newline). A nil img or
-// non-positive size yields a placeholder.
+// rendered string (cellH lines, no trailing newline). Sources that
+// don't match the box aspect (e.g. 16:9 video thumbnails) are
+// center-cropped instead of squeezed. A nil img or non-positive size
+// yields a placeholder.
 func renderCover(img image.Image, cellW, cellH int) string {
 	if img == nil || cellW <= 0 || cellH <= 0 {
 		return placeholderArt(cellW, cellH)
@@ -27,22 +29,26 @@ func renderCover(img image.Image, cellW, cellH int) string {
 		return placeholderArt(cellW, cellH)
 	}
 	dw, dh := cellW, cellH*2
-	// Cache one row of source pixels at a time? Covers are small
-	// enough (a few MP) that direct At() calls are fine, but RGBA()
-	// per pixel on NRGBA is cheap — still, preconvert the whole
-	// image once so area averaging doesn't re-decode YCbCr per tap.
-	pix := make([][3]uint32, sw*sh)
-	for y := 0; y < sh; y++ {
-		for x := 0; x < sw; x++ {
-			cr, cg, cb, _ := img.At(b.Min.X+x, b.Min.Y+y).RGBA()
-			pix[y*sw+x] = [3]uint32{cr, cg, cb}
+	// Center-crop to the box aspect first: a 16:9 thumbnail squeezed
+	// into the square box would look squashed (art-track covers carry
+	// blurred filler on the sides, the clean square sits in the middle).
+	cw, ch, cx0, cy0 := cropRect(sw, sh, dw, dh)
+	// Covers are small enough (a few MP) that direct At() calls are
+	// fine, but RGBA() per pixel on NRGBA is cheap — still, preconvert
+	// the cropped region once so area averaging doesn't re-decode
+	// YCbCr per tap.
+	pix := make([][3]uint32, cw*ch)
+	for y := 0; y < ch; y++ {
+		for x := 0; x < cw; x++ {
+			cr, cg, cb, _ := img.At(b.Min.X+cx0+x, b.Min.Y+cy0+y).RGBA()
+			pix[y*cw+x] = [3]uint32{cr, cg, cb}
 		}
 	}
 	var sb strings.Builder
 	for y := 0; y < cellH; y++ {
 		for x := 0; x < cellW; x++ {
-			r1, g1, b1 := areaAvg(pix, sw, sh, x, y*2, dw, dh)
-			r2, g2, b2 := areaAvg(pix, sw, sh, x, y*2+1, dw, dh)
+			r1, g1, b1 := areaAvg(pix, cw, ch, x, y*2, dw, dh)
+			r2, g2, b2 := areaAvg(pix, cw, ch, x, y*2+1, dw, dh)
 			fmt.Fprintf(&sb, "\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm▀",
 				r1, g1, b1, r2, g2, b2)
 		}
@@ -90,6 +96,35 @@ func areaAvg(pix [][3]uint32, sw, sh, x, y, dw, dh int) (r, g, b int) {
 	}
 	// pix holds 16-bit RGBA values; >>8 converts to 8-bit.
 	return int((sr / n) >> 8), int((sg / n) >> 8), int((sb / n) >> 8)
+}
+
+// cropRect returns the largest centered source rect with the target
+// aspect (dw×dh). Integer math can only shrink, so the result is
+// clamped to [1,sw]×[1,sh]; equal aspects return the full frame.
+func cropRect(sw, sh, dw, dh int) (cw, ch, cx0, cy0 int) {
+	if sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0 {
+		return sw, sh, 0, 0
+	}
+	if sw*dh > dw*sh {
+		ch = sh
+		cw = sh * dw / dh
+	} else {
+		cw = sw
+		ch = sw * dh / dw
+	}
+	if cw < 1 {
+		cw = 1
+	}
+	if ch < 1 {
+		ch = 1
+	}
+	if cw > sw {
+		cw = sw
+	}
+	if ch > sh {
+		ch = sh
+	}
+	return cw, ch, (sw - cw) / 2, (sh - ch) / 2
 }
 
 func sample(img image.Image, b image.Rectangle, sw, sh, x, y, dw, dh int) color.Color {

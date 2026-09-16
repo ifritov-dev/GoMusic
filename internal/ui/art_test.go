@@ -43,3 +43,26 @@ func TestRenderCoverNilGivesPlaceholder(t *testing.T) {
 		t.Fatal("zero size should render empty")
 	}
 }
+
+// Wide art-track-style thumbnails (square art + filler sides) must be
+// center-cropped, not squeezed, into the square box.
+func TestRenderCoverCropsWideToSquare(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 96, 48))
+	for y := 0; y < 48; y++ {
+		for x := 0; x < 96; x++ {
+			c := color.NRGBA{B: 255, A: 255}
+			if x >= 24 && x < 72 {
+				c = color.NRGBA{R: 255, A: 255}
+			}
+			img.Set(x, y, c)
+		}
+	}
+	out := renderCover(img, 12, 6) // 12×12 dest pixels: square box
+	// Every sampled pixel must come from the red center: no blue filler.
+	if strings.Contains(out, ";0;0;255m") {
+		t.Fatalf("wide art must be center-cropped, got blue filler: %.120s…", out)
+	}
+	if !strings.Contains(out, ";255;0;0m") {
+		t.Fatal("expected red center in output")
+	}
+}
