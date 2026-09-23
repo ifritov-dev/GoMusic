@@ -129,12 +129,6 @@ func cropRect(sw, sh, dw, dh int) (cw, ch, cx0, cy0 int) {
 	return cw, ch, (sw - cw) / 2, (sh - ch) / 2
 }
 
-func sample(img image.Image, b image.Rectangle, sw, sh, x, y, dw, dh int) color.Color {
-	sx := b.Min.X + x*sw/dw
-	sy := b.Min.Y + y*sh/dh
-	return img.At(sx, sy)
-}
-
 // paletteOf picks up to 3 dominant colors from a cover for the
 // visualizer. Pixels are quantized into a coarse RGB histogram and
 // near-gray / near-black ones are dropped (they would make gray

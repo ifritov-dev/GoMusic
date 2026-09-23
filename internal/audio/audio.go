@@ -120,11 +120,7 @@ func fill(pOut []byte, frames int) {
 }
 
 // Play sets the source streamer (call once, then use Set to swap).
-func Play(s beep.Streamer) {
-	mu.Lock()
-	defer mu.Unlock()
-	current = s
-}
+func Play(s beep.Streamer) { Set(s) }
 
 // Set swaps the source streamer.
 func Set(s beep.Streamer) {

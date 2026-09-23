@@ -17,7 +17,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-runewidth"
 
 	"github.com/ifritov-dev/GoMusic/internal/config"
 	"github.com/ifritov-dev/GoMusic/internal/discord"
@@ -1232,7 +1231,7 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.dlBusy {
 				m.dlProg = nil
 			}
-			if _, _, err := downloader.Bins(); err != nil {
+			if _, err := downloader.Bins(); err != nil {
 				m.dlStatus = err.Error()
 			} else if m.dlStatus == "" {
 				m.dlStatus = "paste a YouTube / YouTube Music link — playlists download whole"
@@ -2252,7 +2251,7 @@ func truncCells(s string, n int) string {
 			b.WriteRune(r)
 			continue
 		}
-		rw := runewidth.RuneWidth(r)
+		rw := lipgloss.Width(string(r))
 		if w+rw > n-1 { // reserve one cell for …
 			break
 		}
@@ -2504,7 +2503,7 @@ func (m Model) startDownload() (tea.Model, tea.Cmd) {
 		m.dlStatus = err.Error()
 		return m, nil
 	}
-	ytBin, _, err := downloader.Bins()
+	ytBin, err := downloader.Bins()
 	if err != nil {
 		m.dlStatus = err.Error()
 		return m, nil
@@ -2530,7 +2529,7 @@ func (m Model) startDownload() (tea.Model, tea.Cmd) {
 // returns, or esc during a download would cancel nothing (the old
 // value-receiver version dropped it on the floor).
 func (m *Model) dlFetchCmd(gen int, link string, total int) tea.Cmd {
-	ytBin, _, _ := downloader.Bins()
+	ytBin, _ := downloader.Bins()
 	dir := m.cfg.MusicDir
 	prog := downloader.NewProgress(total)
 	m.dlProg = prog

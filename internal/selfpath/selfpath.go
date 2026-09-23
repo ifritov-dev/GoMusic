@@ -6,6 +6,7 @@
 package selfpath
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,12 +95,16 @@ func sameFile(a, b string) bool {
 }
 
 func copyFile(src, dst string) error {
-	data, err := os.ReadFile(src)
+	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(dst, data, 0o755); err != nil {
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	if err != nil {
 		return err
 	}
-	return nil
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
 }
