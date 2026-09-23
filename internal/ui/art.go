@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
+	"sort"
 	"strings"
 )
 
@@ -127,10 +129,133 @@ func cropRect(sw, sh, dw, dh int) (cw, ch, cx0, cy0 int) {
 	return cw, ch, (sw - cw) / 2, (sh - ch) / 2
 }
 
-func sample(img image.Image, b image.Rectangle, sw, sh, x, y, dw, dh int) color.Color {
-	sx := b.Min.X + x*sw/dw
-	sy := b.Min.Y + y*sh/dh
-	return img.At(sx, sy)
+// paletteOf picks up to 3 dominant colors from a cover for the
+// visualizer. Pixels are quantized into a coarse RGB histogram and
+// near-gray / near-black ones are dropped (they would make gray
+// bars); the winners come back ordered dark to light so the bar
+// gradient runs left to right. nil means "no usable color".
+func paletteOf(img image.Image) []color.RGBA {
+	if img == nil {
+		return nil
+	}
+	b := img.Bounds()
+	sw, sh := b.Dx(), b.Dy()
+	if sw <= 0 || sh <= 0 {
+		return nil
+	}
+	step := max(max(sw, sh)/64, 1) // ~64x64 samples, enough for a palette
+	type bucket struct{ n, r, g, bl int }
+	hist := map[int]*bucket{}
+	for y := 0; y < sh; y += step {
+		for x := 0; x < sw; x += step {
+			r, g, bl := rgb(img.At(b.Min.X+x, b.Min.Y+y))
+			mx, mn := max(r, max(g, bl)), min(r, min(g, bl))
+			if mx < 48 || mx-mn < 36 {
+				continue // black or gray
+			}
+			k := (r>>4)<<8 | (g>>4)<<4 | (bl >> 4)
+			bk := hist[k]
+			if bk == nil {
+				bk = &bucket{}
+				hist[k] = bk
+			}
+			bk.n++
+			bk.r += r
+			bk.g += g
+			bk.bl += bl
+		}
+	}
+	type cand struct {
+		c color.RGBA
+		n int
+	}
+	cands := make([]cand, 0, len(hist))
+	for _, bk := range hist {
+		cands = append(cands, cand{color.RGBA{uint8(bk.r / bk.n), uint8(bk.g / bk.n), uint8(bk.bl / bk.n), 255}, bk.n})
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].n > cands[j].n })
+	var out []color.RGBA
+	for _, cd := range cands {
+		if len(out) == 3 {
+			break
+		}
+		distinct := true
+		for _, o := range out {
+			if diff(o, cd.c) < 56 {
+				distinct = false
+				break
+			}
+		}
+		if distinct {
+			out = append(out, cd.c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return luma(out[i]) < luma(out[j]) })
+	if len(out) == 0 {
+		// grayscale fallback: use darkest and lightest sampled pixels
+		var minL, maxL int = 255, 0
+		var minC, maxC color.RGBA
+		for y := 0; y < sh; y += step {
+			for x := 0; x < sw; x += step {
+				r, g, bl := rgb(img.At(b.Min.X+x, b.Min.Y+y))
+				l := (299*r + 587*g + 114*bl) / 1000
+				if l < minL {
+					minL = l
+					minC = color.RGBA{uint8(r), uint8(g), uint8(bl), 255}
+				}
+				if l > maxL {
+					maxL = l
+					maxC = color.RGBA{uint8(r), uint8(g), uint8(bl), 255}
+				}
+			}
+		}
+		if maxL-minL > 48 {
+			out = []color.RGBA{minC, maxC}
+		}
+	}
+	return out
+}
+
+// diff is the largest per-channel difference between two colors.
+func diff(a, b color.RGBA) int {
+	d := max(int(a.R)-int(b.R), int(b.R)-int(a.R))
+	d = max(d, max(int(a.G)-int(b.G), int(b.G)-int(a.G)))
+	return max(d, max(int(a.B)-int(b.B), int(b.B)-int(a.B)))
+}
+
+func luma(c color.RGBA) int { return (299*int(c.R) + 587*int(c.G) + 114*int(c.B)) / 1000 }
+
+// defaultPalette keeps the bars readable when a track has no cover.
+var defaultPalette = []color.RGBA{{0x7C, 0x3A, 0xED, 255}, {0x22, 0xD3, 0xEE, 255}}
+
+// gradient returns n colors interpolated across the palette stops
+// (dark -> light), falling back to the theme pair for an empty
+// palette.
+func gradient(pal []color.RGBA, n int) []color.RGBA {
+	if n <= 0 {
+		return nil
+	}
+	if len(pal) == 0 {
+		pal = defaultPalette
+	}
+	out := make([]color.RGBA, n)
+	if len(pal) == 1 {
+		for i := range out {
+			out[i] = pal[0]
+		}
+		return out
+	}
+	for i := range out {
+		t := float64(i) / math.Max(float64(n-1), 1) * float64(len(pal)-1)
+		j := min(int(t), len(pal)-2)
+		out[i] = lerpRGBA(pal[j], pal[j+1], t-float64(j))
+	}
+	return out
+}
+
+func lerpRGBA(a, b color.RGBA, f float64) color.RGBA {
+	mix := func(x, y uint8) uint8 { return uint8(float64(x) + (float64(y)-float64(x))*f + 0.5) }
+	return color.RGBA{mix(a.R, b.R), mix(a.G, b.G), mix(a.B, b.B), 255}
 }
 
 func rgb(c color.Color) (r, g, bl int) {

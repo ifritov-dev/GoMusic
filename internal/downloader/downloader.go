@@ -50,14 +50,14 @@ func ValidURL(raw string) (string, error) {
 // Bins locates yt-dlp and ffmpeg (mp3 extraction needs ffmpeg).
 // LookPath resolves .exe via PATHEXT on Windows, so bare names are
 // correct on every OS.
-func Bins() (yt, ff string, err error) {
+func Bins() (yt string, err error) {
 	if yt, err = exec.LookPath("yt-dlp"); err != nil {
-		return "", "", fmt.Errorf("yt-dlp not found — " + InstallHint)
+		return "", fmt.Errorf("yt-dlp not found — " + InstallHint)
 	}
-	if ff, err = exec.LookPath("ffmpeg"); err != nil {
-		return "", "", fmt.Errorf("ffmpeg not found — mp3 extraction needs it (%s)", ffmpegHint())
+	if _, err = exec.LookPath("ffmpeg"); err != nil {
+		return "", fmt.Errorf("ffmpeg not found — mp3 extraction needs it (%s)", ffmpegHint())
 	}
-	return yt, ff, nil
+	return yt, nil
 }
 
 // ffmpegHint is the per-OS one-liner for installing ffmpeg.
@@ -130,15 +130,7 @@ func (p *Progress) Overall() float64 {
 	return clamp01((float64(done) + clamp01(pct/100)) / float64(total))
 }
 
-func clamp01(v float64) float64 {
-	if v < 0 {
-		return 0
-	}
-	if v > 1 {
-		return 1
-	}
-	return v
-}
+func clamp01(v float64) float64 { return min(max(v, 0), 1) }
 
 // itemPrefix is our --print marker, emitted before each item downloads:
 // @@ITEM@@:<playlist_index>:<playlist_count>:<title> (index/count are

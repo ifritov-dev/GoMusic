@@ -2,6 +2,7 @@ package library
 
 import (
 	"bytes"
+	"errors"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
@@ -13,8 +14,8 @@ import (
 	"github.com/dhowden/tag"
 )
 
-// Supported extensions (decoded natively, no external binaries).
-var SupportedExts = map[string]bool{
+// supportedExts are decoded natively, no external binaries.
+var supportedExts = map[string]bool{
 	".mp3":  true,
 	".flac": true,
 	".wav":  true,
@@ -31,7 +32,7 @@ type Track struct {
 }
 
 func Supported(path string) bool {
-	return SupportedExts[strings.ToLower(filepath.Ext(path))]
+	return supportedExts[strings.ToLower(filepath.Ext(path))]
 }
 
 // Scan walks dir recursively and returns sorted tracks.
@@ -102,8 +103,4 @@ func Cover(path string) (image.Image, error) {
 	return img, nil
 }
 
-var errNoCover = errNoCoverType{}
-
-type errNoCoverType struct{}
-
-func (errNoCoverType) Error() string { return "no cover art" }
+var errNoCover = errors.New("no cover art")

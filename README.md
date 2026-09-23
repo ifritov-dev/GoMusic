@@ -8,6 +8,12 @@ lipgloss). See [RESEARCH.md](RESEARCH.md) for backend decisions.
 
 - **Controls:** play/pause, previous/next track, ∓5 s seek, shuffle,
   repeat (off/all/one), volume, `?` full help
+- **Visualizer:** `v` turns the middle of the screen into a
+  full-width spectrum (CAVA-style: bars centered, 2 cells wide with a
+  1-cell gap, smoothed with an integral filter on rises and a gravity
+  filter on falls; a pause parks them on a low resting row). Bars
+  wear a gradient sampled from the song's cover art — the theme
+  colors when a track has none
 - **Layout:** library on the left, cover art + song card on the right,
   full-width control bar at the bottom (progress + time, state,
   volume, shuffle/repeat, queue position)
@@ -101,6 +107,7 @@ on Linux): music folder, volume, shuffle, repeat — all persisted.
 | `k` or `?` | keybinds on/off |
 | `c` | settings (music folder) |
 | `y` | download from YouTube / YouTube Music |
+| `v` | visualizer: bars colored from the cover art |
 | `esc` | back (closes keybinds / current page) |
 | `q` | quit |
 
@@ -130,10 +137,12 @@ main.go                  entry: config → player → bubbletea program
 internal/discord/        optional Discord Rich Presence (rich-go IPC)
 internal/audio/          miniaudio output backend (pulls beep streamers)
 internal/player/         decode → resample → volume → transport controls
+internal/player/vis.go   spectrum tap + FFT band analyzer
 internal/library/        recursive scan + tag metadata + cover extraction
 internal/config/         JSON config in os.UserConfigDir
 internal/ui/             bubbletea model: list, progress, filepicker, help
 internal/ui/art.go       cover renderer (stdlib-only half-block truecolor)
+internal/ui/vis.go       visualizer bars + cover-palette gradient
 internal/ui/ui.go        responsive layout (wide/stacked/tiny) + views
 ```
 
@@ -141,7 +150,25 @@ Cover art notes: extracted from the playing file's embedded picture
 (`dhowden/tag` `Picture()`), decoded with stdlib `image/jpeg`+`image/png`,
 rendered to the exact art-box size in a background Cmd and cached.
 Files without art get a dim `♪` placeholder. Truecolor half-blocks
-(`▀` fg=top pixel, bg=bottom) keep it dependency-free.
+(`▀` fg=top pixel, bg=bottom) keep it dependency-free. The same
+decode also extracts a 3-color palette (coarse RGB histogram, grays
+dropped) for the visualizer bars.
+
+Visualizer notes: the player taps its stream between the transport
+and the volume stage, so muted music still animates; a pause settles
+the bars on a low resting row (nothing loaded clears the screen
+instead). Framing and feel follow
+CAVA's defaults: 60 fps, 2-cell bars with a 1-cell gap, centered,
+and 50 Hz … 10 kHz of the spectrum (a 15 kHz ceiling left the last
+bars permanently dark — nothing musical lives up there). Every
+frame runs one 2048-point FFT over the last 43 ms (radix-2, no
+dependency) and sums energy into ~40 log-spaced bands whose edges
+tile the range, so a tone reads the same wherever it lands between
+bins. Levels then climb through CAVA's two filters — an integral
+filter on rises (beats still land within ~4 frames, but no
+frame-to-frame flicker) and a gravity filter on falls (~0.5 s to
+the floor) — and draw with 1/8-block glyphs, at under 150 µs a frame
+even at 200×50.
 
 ## Tests
 

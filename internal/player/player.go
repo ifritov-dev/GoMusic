@@ -34,9 +34,15 @@ type Player struct {
 	mu sync.Mutex
 
 	ctrl     *beep.Ctrl
+	tap      *tapStreamer // visualizer tap, wraps ctrl
 	vol      *effects.Volume
 	streamer beep.StreamSeekCloser // resampled seekable stream (output-rate samples)
 	file     *os.File
+	win      []float32 // analysis scratch for Bands
+	re, im   []float64 // FFT work buffers
+	power    []float64 // power spectrum, bins 0..tapLen/2
+	twRe     []float64 // FFT twiddles (built on first analyze)
+	twIm     []float64
 
 	done    chan struct{}
 	audioOK bool
@@ -60,7 +66,12 @@ func New(volume int) *Player {
 	if volume > 100 {
 		volume = 100
 	}
-	return &Player{volume: volume, done: make(chan struct{})}
+	return &Player{volume: volume, done: make(chan struct{}),
+		win:   make([]float32, tapLen),
+		re:    make([]float64, tapLen),
+		im:    make([]float64, tapLen),
+		power: make([]float64, tapLen/2+1),
+	}
 }
 
 // Init opens the OS audio device. If it fails (e.g. headless CI),
@@ -69,7 +80,8 @@ func (p *Player) Init() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.ctrl = &beep.Ctrl{}
-	p.vol = &effects.Volume{Streamer: p.ctrl, Base: 2, Volume: gain(p.volume), Silent: p.muted}
+	p.tap = newTapStreamer(p.ctrl)
+	p.vol = &effects.Volume{Streamer: p.tap, Base: 2, Volume: gain(p.volume), Silent: p.muted}
 	if err := audio.Init(int(OutRate)); err != nil {
 		p.audioOK = false
 		return
@@ -178,7 +190,8 @@ func (p *Player) PlayFile(path string) error {
 	}))
 	if p.ctrl == nil {
 		p.ctrl = &beep.Ctrl{Streamer: finished}
-		p.vol = &effects.Volume{Streamer: p.ctrl, Base: 2, Volume: gain(p.volume), Silent: p.muted}
+		p.tap = newTapStreamer(p.ctrl)
+		p.vol = &effects.Volume{Streamer: p.tap, Base: 2, Volume: gain(p.volume), Silent: p.muted}
 		if p.audioOK {
 			audio.Play(p.vol)
 		}

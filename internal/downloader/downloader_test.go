@@ -104,7 +104,7 @@ func TestDownload(t *testing.T) {
 
 func TestBinsMissing(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // no binaries here
-	if _, _, err := Bins(); err == nil || !strings.Contains(err.Error(), "yt-dlp") {
+	if _, err := Bins(); err == nil || !strings.Contains(err.Error(), "yt-dlp") {
 		t.Fatalf("Bins = %v, want yt-dlp error", err)
 	}
 }
