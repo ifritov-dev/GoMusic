@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"image/color"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -44,29 +45,31 @@ type artMsg struct {
 	path string
 	w, h int
 	art  string
+	pal  []color.RGBA // visualizer palette extracted from the cover
 }
 
 // Key bindings ----------------------------------------------------
 
 type keyMap struct {
-	PlayPause key.Binding
-	Play      key.Binding
-	Next      key.Binding
-	Prev      key.Binding
-	VolUp     key.Binding
-	VolDown   key.Binding
-	Mute      key.Binding
-	SeekFwd   key.Binding
-	SeekBack  key.Binding
-	Shuffle   key.Binding
-	Repeat    key.Binding
-	Refresh   key.Binding
-	Download  key.Binding
-	Settings  key.Binding
-	ApplyDir  key.Binding
-	Back      key.Binding
-	Keybinds  key.Binding
-	Quit      key.Binding
+	PlayPause  key.Binding
+	Play       key.Binding
+	Next       key.Binding
+	Prev       key.Binding
+	VolUp      key.Binding
+	VolDown    key.Binding
+	Mute       key.Binding
+	SeekFwd    key.Binding
+	SeekBack   key.Binding
+	Shuffle    key.Binding
+	Repeat     key.Binding
+	Refresh    key.Binding
+	Download   key.Binding
+	Visualizer key.Binding
+	Settings   key.Binding
+	ApplyDir   key.Binding
+	Back       key.Binding
+	Keybinds   key.Binding
+	Quit       key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
@@ -78,29 +81,30 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.PlayPause, k.Play, k.Next, k.Prev},
 		{k.Shuffle, k.Repeat, k.VolUp, k.VolDown, k.Mute},
 		{k.SeekFwd, k.SeekBack, k.Refresh, k.Download},
-		{k.Settings, k.Keybinds, k.Back, k.Quit},
+		{k.Visualizer, k.Settings, k.Keybinds, k.Back, k.Quit},
 	}
 }
 
 var keys = keyMap{
-	PlayPause: key.NewBinding(key.WithKeys(" ", "p"), key.WithHelp("space/p", "play/pause")),
-	Play:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "play")),
-	Next:      key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "next")),
-	Prev:      key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "prev")),
-	VolUp:     key.NewBinding(key.WithKeys("+", "="), key.WithHelp("+", "vol+")),
-	VolDown:   key.NewBinding(key.WithKeys("-", "_"), key.WithHelp("-", "vol-")),
-	Mute:      key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mute")),
-	SeekFwd:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "+5s")),
-	SeekBack:  key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "-5s")),
-	Shuffle:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "shuffle")),
-	Repeat:    key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "repeat")),
-	Refresh:   key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "refresh")),
-	Download:  key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "download")),
-	Settings:  key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "settings")),
-	ApplyDir:  key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "use folder")),
-	Back:      key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
-	Keybinds:  key.NewBinding(key.WithKeys("k", "?"), key.WithHelp("k", "keybinds")),
-	Quit:      key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+	PlayPause:  key.NewBinding(key.WithKeys(" ", "p"), key.WithHelp("space/p", "play/pause")),
+	Play:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "play")),
+	Next:       key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "next")),
+	Prev:       key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "prev")),
+	VolUp:      key.NewBinding(key.WithKeys("+", "="), key.WithHelp("+", "vol+")),
+	VolDown:    key.NewBinding(key.WithKeys("-", "_"), key.WithHelp("-", "vol-")),
+	Mute:       key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mute")),
+	SeekFwd:    key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "+5s")),
+	SeekBack:   key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "-5s")),
+	Shuffle:    key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "shuffle")),
+	Repeat:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "repeat")),
+	Refresh:    key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "refresh")),
+	Download:   key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "download")),
+	Visualizer: key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "visualizer")),
+	Settings:   key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "settings")),
+	ApplyDir:   key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "use folder")),
+	Back:       key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+	Keybinds:   key.NewBinding(key.WithKeys("k", "?"), key.WithHelp("k", "keybinds")),
+	Quit:       key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 }
 
 // ruLayout maps Cyrillic letters to the Latin letter on the same
@@ -205,6 +209,16 @@ type Model struct {
 	artText string
 	artW    int
 	artH    int
+	// Cover palette: colors the visualizer bars. Loaded with the art
+	// (even when the art box itself is hidden) so the full-width bars
+	// always wear the song's colors; nil falls back to the theme pair.
+	artPal []color.RGBA
+	// Visualizer ("v").
+	vis        bool
+	visTicking bool         // a visTick chain is alive (never start a second)
+	bars       []float64    // smoothed levels, one per bar
+	raw        []float64    // reused Bands output
+	visColors  []color.RGBA // gradient across the current bar count
 	// Discord Rich Presence (optional; all IPC off the main path).
 	discord *discord.Manager
 	// Ticks since start (presence re-pushes every ~30s).
@@ -317,14 +331,15 @@ func (m Model) loadLibrary(dir string) tea.Cmd {
 	}
 }
 
-// loadArtCmd decodes + renders cover art off the main path.
+// loadArtCmd decodes + renders cover art off the main path, plus the
+// cover palette for the visualizer.
 func loadArtCmd(path string, w, h int) tea.Cmd {
 	return func() tea.Msg {
 		img, err := library.Cover(path)
 		if err != nil {
 			return artMsg{path: path, w: w, h: h, art: ""}
 		}
-		return artMsg{path: path, w: w, h: h, art: renderCover(img, w, h)}
+		return artMsg{path: path, w: w, h: h, art: renderCover(img, w, h), pal: paletteOf(img)}
 	}
 }
 
@@ -565,11 +580,12 @@ func (m *Model) playIndex(i int) tea.Cmd {
 	m.playing = true
 	m.list.Select(i)
 	m.errText = ""
+	// Always decode the cover, even with the art box hidden in a tiny
+	// window: the visualizer bars need the palette. With the box
+	// hidden artW/artH are 0 and only the palette survives.
 	lo := m.layout()
-	if lo.showArt {
-		m.artW, m.artH = lo.artW, lo.artH
-		cmds = append(cmds, loadArtCmd(m.tracks[i].Path, lo.artW, lo.artH))
-	}
+	m.artW, m.artH = lo.artW, lo.artH
+	cmds = append(cmds, loadArtCmd(m.tracks[i].Path, lo.artW, lo.artH))
 	cmds = append(cmds, m.waitTrackEnd(gen), m.pushPresenceCmd())
 	m.saveState()
 	return tea.Batch(cmds...)
@@ -584,6 +600,8 @@ func (m *Model) stopPlayback() tea.Cmd {
 	m.shuffleOrder = nil
 	m.shufflePos = -1
 	m.artPath, m.artText = "", ""
+	m.artPal = nil
+	m.refreshVisColors()
 	if len(cmds) == 0 {
 		return nil
 	}
@@ -1054,6 +1072,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.playing = false
 				m.cur = -1
 				m.artPath, m.artText = "", ""
+				m.artPal = nil
+				m.refreshVisColors()
 				m.playGen++
 			}
 		}
@@ -1094,6 +1114,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tick()
 
+	case visTickMsg:
+		if !m.vis {
+			m.visTicking = false
+			return m, nil
+		}
+		m.updateBars()
+		return m, visTick()
+
 	case trackEndedMsg:
 		if m.playing && m.mode == modeMain {
 			return m, m.onTrackEnded(msg.gen)
@@ -1110,6 +1138,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.artPath = msg.path
+		m.artPal = msg.pal
+		m.refreshVisColors() // new song, new cover colors
 		if msg.art == "" {
 			m.artText = placeholderArt(msg.w, msg.h)
 		} else {
@@ -1184,6 +1214,13 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// list's ClearFilter, but our binding runs first.
 			if m.list.FilterState() != list.Unfiltered {
 				m.list.ResetFilter()
+				return m, nil
+			}
+			// esc is also "close the visualizer" (same as v):
+			// the in-flight tick chain notices vis == false and
+			// stops on its own, like the v toggle-off path.
+			if m.vis {
+				m.vis = false
 				return m, nil
 			}
 			// Already home: esc only closes the keybinds overlay.
@@ -1279,6 +1316,17 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Refresh):
 			m.status = "refreshing library…"
 			return m, m.loadLibrary(m.cfg.MusicDir)
+		case key.Matches(msg, keys.Visualizer):
+			m.vis = !m.vis
+			if !m.vis {
+				return m, nil
+			}
+			m.updateBars() // draw the first frame now, not 50ms later
+			if m.visTicking {
+				return m, nil // already animating: keep the one chain
+			}
+			m.visTicking = true
+			return m, visTick()
 		}
 	}
 
@@ -1713,6 +1761,10 @@ func (m Model) viewMain() string {
 	lines = append(lines, strings.Repeat(" ", W))
 	if m.showHelp {
 		lines = append(lines, m.helpFrame(lo)...)
+	} else if m.vis {
+		// The visualizer takes the whole middle section: no columns,
+		// no compaction — just bars and the caption row.
+		lines = append(lines, m.visRows(W, lo.midH)...)
 	} else if lo.arrange == arrangeSingle {
 		for _, r := range m.leftRows(lo.leftW, lo.midUsed, lo.rowsPer, lo.showAll) {
 			lines = append(lines, r)
@@ -2096,6 +2148,7 @@ var helpLines = []string{
 	"u              refresh library",
 	"f              search (title / artist / album)",
 	"y              download from YouTube",
+	"v              visualizer (cover-colored bars)",
 	"k              keybinds",
 	"c              settings",
 	"esc            back",
