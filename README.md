@@ -106,7 +106,7 @@ on Linux): music folder, volume, shuffle, repeat — all persisted.
 | `f` | search by title / artist / album (`esc` clears) |
 | `k` or `?` | keybinds on/off |
 | `c` | settings (music folder) |
-| `y` | download from YouTube / YouTube Music |
+| `y` | download from YouTube / YouTube Music / SoundCloud |
 | `v` | visualizer: bars colored from the cover art |
 | `esc` | back (closes keybinds / current page) |
 | `q` | quit |
@@ -121,7 +121,7 @@ folders-only browser for picking by hand. `esc` goes back.
 
 ### Download (`y`)
 
-Pastes a YouTube / YouTube Music link, verifies it resolves, then
+Pastes a YouTube / YouTube Music / SoundCloud link, verifies it resolves, then
 downloads best audio as mp3 straight into your music folder and
 rescans the library. Title/artist tags and cover art are embedded
 (`--add-metadata --embed-thumbnail`; channel name backs up a missing

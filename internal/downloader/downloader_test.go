@@ -16,6 +16,9 @@ func TestValidURL(t *testing.T) {
 		"https://music.youtube.com/playlist?list=OLAK123",
 		"https://m.youtube.com/watch?v=dQw4w9WgXcQ",
 		"https://youtu.be/dQw4w9WgXcQ",
+		"https://soundcloud.com/artist/track",
+		"https://m.soundcloud.com/artist/track",
+		"https://on.soundcloud.com/artist/track",
 		"  https://youtu.be/dQw4w9WgXcQ  ",
 	}
 	for _, u := range valid {

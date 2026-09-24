@@ -1234,7 +1234,7 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if _, err := downloader.Bins(); err != nil {
 				m.dlStatus = err.Error()
 			} else if m.dlStatus == "" {
-				m.dlStatus = "paste a YouTube / YouTube Music link — playlists download whole"
+				m.dlStatus = "paste a YouTube, YouTube Music, or SoundCloud link — playlists download whole"
 			}
 			return m, textinput.Blink
 		case key.Matches(msg, keys.Settings):
@@ -2549,7 +2549,7 @@ func (m Model) viewDownload() string {
 		return m.subView("Download", m.subHelpBody())
 	}
 	var body []string
-	body = append(body, sectionStyle.Render("YouTube / YouTube Music link:"))
+	body = append(body, sectionStyle.Render("YouTube / YouTube Music / SoundCloud link:"))
 	body = append(body, "  "+m.urlInput.View())
 	body = append(body, "")
 	if m.dlBusy {

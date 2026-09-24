@@ -16,7 +16,7 @@ import (
 	"sync"
 )
 
-// allowedHosts are the URL hosts we accept (YouTube + YouTube Music).
+// allowedHosts are the URL hosts we accept (YouTube, YouTube Music, and SoundCloud).
 var allowedHosts = map[string]bool{
 	"youtube.com":              true,
 	"www.youtube.com":          true,
@@ -26,12 +26,16 @@ var allowedHosts = map[string]bool{
 	"www.youtu.be":             true,
 	"youtube-nocookie.com":     true,
 	"www.youtube-nocookie.com": true,
+	"soundcloud.com":           true,
+	"www.soundcloud.com":       true,
+	"m.soundcloud.com":         true,
+	"on.soundcloud.com":        true,
 }
 
 // InstallHint points at yt-dlp releases when the binary is missing.
 const InstallHint = "install yt-dlp: https://github.com/yt-dlp/yt-dlp#installation"
 
-// ValidURL trims raw and returns it if it looks like a YouTube(/Music) link.
+// ValidURL trims raw and returns it if it looks like a supported audio link.
 func ValidURL(raw string) (string, error) {
 	u := strings.TrimSpace(raw)
 	if u == "" {
@@ -42,7 +46,7 @@ func ValidURL(raw string) (string, error) {
 		return "", fmt.Errorf("not a link — paste an https://… URL")
 	}
 	if !allowedHosts[strings.ToLower(parsed.Hostname())] {
-		return "", fmt.Errorf("not a YouTube link (youtube.com, music.youtube.com, youtu.be)")
+		return "", fmt.Errorf("not a YouTube or SoundCloud link")
 	}
 	return u, nil
 }

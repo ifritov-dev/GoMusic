@@ -304,7 +304,7 @@ func TestDownloadFrameExact(t *testing.T) {
 	// Idle tab: hint + shared frame.
 	m := testModel(99, 31)
 	m.mode = modeDownload
-	m.dlStatus = "paste a YouTube / YouTube Music link — playlists download whole"
+	m.dlStatus = "paste a YouTube, YouTube Music, or SoundCloud link — playlists download whole"
 	out := m.View()
 	checkTabFrame(t, m, out)
 	if !strings.Contains(out, "Download") || !strings.Contains(out, "playlists download whole") {
