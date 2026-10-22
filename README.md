@@ -1,4 +1,4 @@
-![GoMusic logo](assets/GoMusic-bg.png)
+![GoMusic logo](assets/gomusic.png)
 
 # ♪ GoMusic
 
