@@ -85,24 +85,7 @@ game entry for gomusic to avoid a duplicate "Playing" row).
 Presence renders as Listening (type 2): main row is the song title,
 second row the artist, plus live progress, always our logo as the
 large image, and a GitHub button to this repo (no hover texts or
-small image: some clients render them as duplicate rows). The
-`logo` asset must be uploaded under the Application ID or the
-card degrades.
-Note: Discord hides buttons on your *own* activity card — other
-people viewing your profile see them, you don't; it updates on track change, pause/resume
-and seek, and clears on quit. Pushes are generation-gated (no stale
-flashes) and Discord-absent rescans back off, so playback never
-waits on Discord.
-
-Setup (once): Discord requires every presence to belong to an
-Application — create one at
-<https://discord.com/developers/applications> → Rich Presence → Art
-Assets → upload `assets/GoMusic-bg.png` as `logo`, then paste the
-Application ID into Settings (a future update bakes the official ID
-in as the default so this step disappears). Note: Discord only renders images
-pre-uploaded under your Application ID, so local song covers can't be
-used — the logo is shown and the song rides in the hover text
-on Linux): music folder, volume, shuffle, repeat — all persisted.
+small image: some clients render them as duplicate rows).
 
 ## Keys
 
