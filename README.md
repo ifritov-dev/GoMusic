@@ -34,7 +34,22 @@ lipgloss). See [RESEARCH.md](RESEARCH.md) for backend decisions.
 - **Platforms:** Linux, Windows, macOS — needs only a C compiler
   (gcc/clang/MinGW) for the bundled miniaudio backend
 
-## Build & run
+## Install & run
+
+The easiest way — the install script (macOS, Linux, Windows via Git
+Bash). It needs [Go](https://go.dev/dl) and a C compiler (`gcc`, Xcode
+CLT, or MinGW-w64), builds the app and registers the `gomusic`
+command:
+
+```sh
+git clone https://github.com/ifritov-dev/GoMusic
+cd GoMusic
+./install.sh
+```
+
+Then just type `gomusic` in any terminal.
+
+Prefer to build by hand?
 
 ```sh
 go build -o gomusic .
